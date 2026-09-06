@@ -50,6 +50,47 @@ describe('journal storage', () => {
     expect(retained[0]).toEqual(records[8]);
   });
 
+  it('keeps 21 calendar days of adaptive checks plus throttled manual checks', () => {
+    const start = Date.UTC(2026, 0, 1);
+    const end = start + RETENTION_DAYS * 86400000;
+    const records: CanaryRecord[] = [];
+    const lastDayStart = end - 86400000;
+
+    for (let timestamp = start; timestamp < lastDayStart; timestamp += 60 * 60000) {
+      records.push(
+        {
+          ...record(0, records.length, end),
+          timestampUtc: new Date(timestamp).toISOString(),
+        },
+        {
+          ...record(0, records.length + 1, end),
+          timestampUtc: new Date(timestamp + 1).toISOString(),
+        },
+      );
+    }
+
+    for (let timestamp = lastDayStart; timestamp < end; timestamp += 10 * 60000) {
+      records.push(
+        {
+          ...record(0, records.length, end),
+          timestampUtc: new Date(timestamp).toISOString(),
+        },
+        {
+          ...record(0, records.length + 1, end),
+          timestampUtc: new Date(timestamp + 1).toISOString(),
+        },
+      );
+    }
+
+    const retained = applyRetention(records, new Date(end));
+
+    expect(retained).toHaveLength(records.length);
+    expect(retained[0].timestampUtc).toBe(new Date(start).toISOString());
+    expect(retained.at(-1)?.timestampUtc).toBe(
+      new Date(end - 10 * 60000 + 1).toISOString(),
+    );
+  });
+
   it('persists appended records after retention', async () => {
     const now = Date.now();
     await appendRecords([

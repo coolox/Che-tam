@@ -4,14 +4,13 @@ import * as TaskManager from 'expo-task-manager';
 import { BACKGROUND_TASK_NAME, CHECK_INTERVAL_MINUTES, getConfiguredEndpoint } from './config';
 import { runConnectivityCheck } from './checks';
 import { getCoarseNetworkType } from './networkInfo';
-import { shouldRunScheduledCheck } from './schedulePolicy';
+import { getScheduleState, shouldRunScheduledCheck } from './schedulePolicy';
 import { loadRecords } from './storage';
 
 TaskManager.defineTask(BACKGROUND_TASK_NAME, async () => {
   try {
     const records = await loadRecords();
-    const latestAttempt = records[records.length - 1]?.timestampUtc;
-    if (!shouldRunScheduledCheck(latestAttempt)) {
+    if (!shouldRunScheduledCheck(getScheduleState(records))) {
       return BackgroundFetch.BackgroundFetchResult.NoData;
     }
 
