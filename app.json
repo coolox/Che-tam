@@ -1,0 +1,26 @@
+{
+  "expo": {
+    "name": "Hearth Canary",
+    "slug": "hearth-canary",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "package": "net.hearth.canary",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ]
+    },
+    "extra": {
+      "canaryEndpoint": "${EXPO_PUBLIC_CANARY_ENDPOINT}"
+    }
+  }
+}
