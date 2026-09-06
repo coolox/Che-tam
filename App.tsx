@@ -11,11 +11,11 @@ import {
   View,
 } from 'react-native';
 
-import './src/background';
 import { runConnectivityCheck } from './src/checks';
 import { getConfiguredEndpoint } from './src/config';
 import { createJournalExport } from './src/exportJournal';
 import { getCoarseNetworkType } from './src/networkInfo';
+import { getManualCheckWaitMs, shouldThrottleManualCheck } from './src/schedulePolicy';
 import { countFailuresSince, findLastSuccess, loadRecords } from './src/storage';
 import { CanaryRecord } from './src/types';
 import { registerBackgroundChecks } from './src/background';
@@ -44,6 +44,29 @@ function resultText(records: CanaryRecord[]): string {
   return 'Связи нет';
 }
 
+export async function executeManualCheck(params: {
+  endpoint: string | undefined;
+  lastAttemptUtc: string | undefined;
+  getNetworkType: typeof getCoarseNetworkType;
+  runCheck: typeof runConnectivityCheck;
+  now?: Date;
+}): Promise<
+  | { kind: 'throttled'; waitMs: number }
+  | { kind: 'completed'; result: Awaited<ReturnType<typeof runConnectivityCheck>> }
+> {
+  const waitMs = getManualCheckWaitMs(params.lastAttemptUtc, params.now);
+  if (waitMs > 0) {
+    return { kind: 'throttled', waitMs };
+  }
+
+  const networkType = await params.getNetworkType();
+  const result = await params.runCheck({
+    endpoint: params.endpoint,
+    networkType,
+  });
+  return { kind: 'completed', result };
+}
+
 export default function App() {
   const [records, setRecords] = useState<CanaryRecord[]>([]);
   const [busy, setBusy] = useState(false);
@@ -64,8 +87,16 @@ export default function App() {
     return countFailuresSince(records, since);
   }, [records]);
   const latest = records[records.length - 1];
+  const manualCheckWaitMs = getManualCheckWaitMs(latest?.timestampUtc);
 
   const runManualCheck = useCallback(async () => {
+    const throttle = shouldThrottleManualCheck(latest?.timestampUtc);
+    if (throttle.throttled) {
+      const waitMinutes = Math.ceil(throttle.waitMs / 60000);
+      setMessage(`Повторная проверка будет доступна через ${waitMinutes} мин.`);
+      return;
+    }
+
     setBusy(true);
     setMessage('');
     try {
@@ -82,7 +113,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [reload]);
+  }, [latest?.timestampUtc, reload]);
 
   const exportJournal = useCallback(async () => {
     setBusy(true);
@@ -136,15 +167,21 @@ export default function App() {
         <View style={styles.actions}>
           <Pressable
             accessibilityRole="button"
-            disabled={busy}
+            disabled={busy || manualCheckWaitMs > 0}
             onPress={runManualCheck}
             style={({ pressed }) => [
               styles.primaryButton,
-              (busy || pressed) && styles.buttonPressed,
+              (busy || manualCheckWaitMs > 0 || pressed) && styles.buttonPressed,
             ]}>
             {busy ? <ActivityIndicator color="#fff" /> : null}
             <Text style={styles.primaryButtonText}>Проверить сейчас</Text>
           </Pressable>
+
+          {manualCheckWaitMs > 0 ? (
+            <Text style={styles.helpText}>
+              Повторная проверка временно недоступна, попробуйте позже.
+            </Text>
+          ) : null}
 
           <Pressable
             accessibilityRole="button"
@@ -221,6 +258,10 @@ const styles = StyleSheet.create({
   message: {
     color: '#26332c',
     fontSize: 15,
+  },
+  helpText: {
+    color: '#58625c',
+    fontSize: 13,
   },
   actions: {
     marginTop: 'auto',

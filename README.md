@@ -51,12 +51,12 @@ The local journal stores only:
 - `networkType`
 - `errorCategory`
 
-Records are retained for 21 days and capped at 6048 records, removing oldest records first. Export writes human-readable JSON for manual transfer only.
+Records are retained for 21 days and capped at 12096 records, removing oldest records first. That cap is sized for the worst expected mix of adaptive scheduled checks plus throttled manual rechecks. Export writes human-readable JSON for manual transfer only.
 
 ## Traffic Estimate
 
-Normal scheduling is one HTTPS request plus one WebSocket connect/close every 10 minutes. Estimated traffic is 4320 KB/month, excluding manual exports and APK installation. Manual checks add about 1 KB each under the same small-response assumption.
+Planning estimate only: the app can produce one HTTPS + one WebSocket pair every 10 minutes for the first 24 hours, then one pair per hour, with failed pairs temporarily returning to the 10-minute cadence for 60 minutes. Manual rechecks are limited to one pair per 10 minutes. Monthly KB must be measured against the deployed HTTPS/WSS endpoint after infrastructure is in place, because TLS and WebSocket handshake overhead make local payload-only estimates incomplete.
 
 ## Expo Background Limitation
 
-`expo-background-fetch` exposes a minimum interval request, not an exact timer. Android and device vendors may delay or suppress background checks depending on battery optimization, app standby, reboot state, and user settings. The participant instructions ask the tester to disable battery restrictions for this app.
+`expo-background-fetch` exposes a minimum interval request, not an exact timer. Android and device vendors may delay or suppress background checks depending on battery optimization, reboot state, app standby, force-stop behavior, and user settings. The participant should open the app at least once daily and use `Проверить сейчас` if the latest record is stale.
