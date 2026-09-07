@@ -12,7 +12,7 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   }),
 }));
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: 'file:///cache/',
   documentDirectory: 'file:///docs/',
   EncodingType: {
