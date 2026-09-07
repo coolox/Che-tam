@@ -14,6 +14,7 @@ function nowIso(): string {
 }
 
 function makeRecord(params: {
+  checkPairKey: string;
   testType: CanaryTestType;
   success: boolean;
   startedAtMs: number;
@@ -23,6 +24,7 @@ function makeRecord(params: {
 }): CanaryRecord {
   return {
     timestampUtc: nowIso(),
+    checkPairKey: params.checkPairKey,
     testType: params.testType,
     success: params.success,
     httpStatus: params.httpStatus,
@@ -35,6 +37,7 @@ function makeRecord(params: {
 export async function runHttpsCheck(
   endpoint: string,
   networkType: CanaryNetworkType,
+  checkPairKey = nowIso(),
 ): Promise<CanaryRecord> {
   const startedAtMs = Date.now();
   const controller = new AbortController();
@@ -48,6 +51,7 @@ export async function runHttpsCheck(
     });
     clearTimeout(timeout);
     return makeRecord({
+      checkPairKey,
       testType: 'https',
       success: response.ok,
       startedAtMs,
@@ -58,6 +62,7 @@ export async function runHttpsCheck(
   } catch (error) {
     clearTimeout(timeout);
     return makeRecord({
+      checkPairKey,
       testType: 'https',
       success: false,
       startedAtMs,
@@ -70,6 +75,7 @@ export async function runHttpsCheck(
 export async function runWebSocketCheck(
   endpoint: string,
   networkType: CanaryNetworkType,
+  checkPairKey = nowIso(),
 ): Promise<CanaryRecord> {
   const startedAtMs = Date.now();
 
@@ -94,6 +100,7 @@ export async function runWebSocketCheck(
     });
 
     return makeRecord({
+      checkPairKey,
       testType: 'websocket',
       success: true,
       startedAtMs,
@@ -101,6 +108,7 @@ export async function runWebSocketCheck(
     });
   } catch (error) {
     return makeRecord({
+      checkPairKey,
       testType: 'websocket',
       success: false,
       startedAtMs,
@@ -115,13 +123,15 @@ export async function runConnectivityCheck(params: {
   networkType: CanaryNetworkType;
 }): Promise<CheckPairResult> {
   const { endpoint, networkType } = params;
+  const checkPairKey = nowIso();
   const records = endpoint
     ? await Promise.all([
-        runHttpsCheck(endpoint, networkType),
-        runWebSocketCheck(endpoint, networkType),
+        runHttpsCheck(endpoint, networkType, checkPairKey),
+        runWebSocketCheck(endpoint, networkType, checkPairKey),
       ])
     : [
         makeRecord({
+          checkPairKey,
           testType: 'https',
           success: false,
           startedAtMs: Date.now(),
@@ -129,6 +139,7 @@ export async function runConnectivityCheck(params: {
           errorCategory: 'configuration_error',
         }),
         makeRecord({
+          checkPairKey,
           testType: 'websocket',
           success: false,
           startedAtMs: Date.now(),
