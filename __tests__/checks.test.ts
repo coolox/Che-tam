@@ -41,6 +41,8 @@ describe('connectivity checks', () => {
       'https',
       'websocket',
     ]);
+    expect(result.records[0].checkPairKey).toBeDefined();
+    expect(result.records[0].checkPairKey).toBe(result.records[1].checkPairKey);
     expect(result.records.every(record => record.success)).toBe(true);
     await expect(loadRecords()).resolves.toHaveLength(2);
   });

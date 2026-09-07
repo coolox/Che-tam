@@ -19,6 +19,8 @@ export type CanaryNetworkType =
 
 export interface CanaryRecord {
   timestampUtc: string;
+  /** Non-identifying local marker that groups the two records from one probe. */
+  checkPairKey?: string;
   testType: CanaryTestType;
   success: boolean;
   httpStatus?: number;
