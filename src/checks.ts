@@ -6,147 +6,85 @@ import {
   CanaryNetworkType,
   CanaryRecord,
   CanaryTestType,
-  CheckPairResult,
+  CheckRunResult,
 } from './types';
 
-function nowIso(): string {
-  return new Date().toISOString();
+const EMPTY_PHASES = { dnsMs: null, tcpMs: null, tlsMs: null, httpMs: null };
+
+function targetHost(value?: string): string {
+  if (!value) return 'not_configured';
+  try { return new URL(value).hostname; } catch { return value; }
 }
 
 function makeRecord(params: {
-  checkPairKey: string;
-  testType: CanaryTestType;
-  success: boolean;
-  startedAtMs: number;
-  networkType: CanaryNetworkType;
-  httpStatus?: number;
-  errorCategory?: CanaryErrorCategory;
+  checkRunKey: string; testType: CanaryTestType; target: string; success: boolean; startedAtMs: number;
+  networkType: CanaryNetworkType; appState: CanaryRecord['appState']; carrier?: string | null;
+  httpStatus?: number | null; resolvedIp?: string | null; errorCategory?: CanaryErrorCategory;
+  errorDetail?: string | null; phases?: CanaryRecord['phases'];
 }): CanaryRecord {
   return {
-    timestampUtc: nowIso(),
-    checkPairKey: params.checkPairKey,
-    testType: params.testType,
-    success: params.success,
-    httpStatus: params.httpStatus,
-    latencyMs: Math.max(0, Math.round(Date.now() - params.startedAtMs)),
-    networkType: params.networkType,
-    errorCategory: params.errorCategory ?? 'none',
+    timestampUtc: new Date().toISOString(), checkRunKey: params.checkRunKey, testType: params.testType,
+    target: params.target, success: params.success, httpStatus: params.httpStatus ?? null,
+    latencyMs: Math.max(0, Math.round(Date.now() - params.startedAtMs)), phases: params.phases ?? EMPTY_PHASES,
+    resolvedIp: params.resolvedIp ?? null, networkType: params.networkType, carrier: params.carrier ?? null,
+    appState: params.appState, errorCategory: params.errorCategory ?? 'unknown', errorDetail: params.errorDetail ?? null,
   };
 }
 
-export async function runHttpsCheck(
-  endpoint: string,
-  networkType: CanaryNetworkType,
-  checkPairKey = nowIso(),
-): Promise<CanaryRecord> {
+async function runHttpCheck(params: {
+  checkRunKey: string; testType: 'control_dns' | 'control_http' | 'http_domain'; endpoint?: string;
+  networkType: CanaryNetworkType; appState: CanaryRecord['appState']; carrier?: string | null;
+}): Promise<CanaryRecord> {
   const startedAtMs = Date.now();
+  if (!params.endpoint) return makeRecord({ ...params, target: 'not_configured', success: false, startedAtMs, errorCategory: 'unknown', errorDetail: 'HTTPS target is not configured' });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      cache: 'no-store',
-      signal: controller.signal,
-    });
+    const response = await fetch(params.endpoint, { method: 'GET', cache: 'no-store', signal: controller.signal });
     clearTimeout(timeout);
-    return makeRecord({
-      checkPairKey,
-      testType: 'https',
-      success: response.ok,
-      startedAtMs,
-      networkType,
-      httpStatus: response.status,
-      errorCategory: response.ok ? 'none' : 'http_error',
-    });
+    return makeRecord({ ...params, target: targetHost(params.endpoint), success: response.ok, startedAtMs, httpStatus: response.status, phases: { ...EMPTY_PHASES, httpMs: Math.max(0, Date.now() - startedAtMs) }, errorCategory: response.ok ? 'unknown' : 'http_error' });
   } catch (error) {
     clearTimeout(timeout);
-    return makeRecord({
-      checkPairKey,
-      testType: 'https',
-      success: false,
-      startedAtMs,
-      networkType,
-      errorCategory: sanitizeErrorCategory(error),
-    });
+    return makeRecord({ ...params, target: targetHost(params.endpoint), success: false, startedAtMs, errorCategory: sanitizeErrorCategory(error), errorDetail: 'HTTP request failed' });
   }
 }
 
-export async function runWebSocketCheck(
-  endpoint: string,
-  networkType: CanaryNetworkType,
-  checkPairKey = nowIso(),
-): Promise<CanaryRecord> {
+/** JavaScript fallback only. Android manual/background execution always calls native runNow(). */
+function unavailableDnsRecord(params: { checkRunKey: string; networkType: CanaryNetworkType; appState: CanaryRecord['appState']; carrier?: string | null; endpoint?: string }): CanaryRecord {
   const startedAtMs = Date.now();
-
-  try {
-    const wsUrl = toWebSocketEndpoint(endpoint);
-    await new Promise<void>((resolve, reject) => {
-      const socket = new WebSocket(wsUrl);
-      const timeout = setTimeout(() => {
-        socket.close();
-        reject(new Error('WebSocket timeout'));
-      }, REQUEST_TIMEOUT_MS);
-
-      socket.onopen = () => {
-        clearTimeout(timeout);
-        socket.close();
-        resolve();
-      };
-      socket.onerror = () => {
-        clearTimeout(timeout);
-        reject(new Error('WebSocket error'));
-      };
-    });
-
-    return makeRecord({
-      checkPairKey,
-      testType: 'websocket',
-      success: true,
-      startedAtMs,
-      networkType,
-    });
-  } catch (error) {
-    return makeRecord({
-      checkPairKey,
-      testType: 'websocket',
-      success: false,
-      startedAtMs,
-      networkType,
-      errorCategory: sanitizeErrorCategory(error),
-    });
-  }
+  return makeRecord({ ...params, testType: 'dns_resolve', target: targetHost(params.endpoint), success: false, startedAtMs, errorCategory: 'unknown', errorDetail: 'system resolver result requires the native Android monitor' });
 }
 
 export async function runConnectivityCheck(params: {
-  endpoint: string | undefined;
-  networkType: CanaryNetworkType;
-}): Promise<CheckPairResult> {
-  const { endpoint, networkType } = params;
-  const checkPairKey = nowIso();
-  const records = endpoint
-    ? await Promise.all([
-        runHttpsCheck(endpoint, networkType, checkPairKey),
-        runWebSocketCheck(endpoint, networkType, checkPairKey),
-      ])
-    : [
-        makeRecord({
-          checkPairKey,
-          testType: 'https',
-          success: false,
-          startedAtMs: Date.now(),
-          networkType,
-          errorCategory: 'configuration_error',
-        }),
-        makeRecord({
-          checkPairKey,
-          testType: 'websocket',
-          success: false,
-          startedAtMs: Date.now(),
-          networkType,
-          errorCategory: 'configuration_error',
-        }),
-      ];
+  endpoint?: string; controlDns?: string; controlHttp?: string; networkType: CanaryNetworkType;
+  carrier?: string | null; appState?: CanaryRecord['appState'];
+}): Promise<CheckRunResult> {
+  const checkRunKey = new Date().toISOString();
+  const appState = params.appState ?? 'foreground';
+  const records = await Promise.all([
+    runHttpCheck({ checkRunKey, testType: 'control_dns', endpoint: params.controlDns, networkType: params.networkType, carrier: params.carrier, appState }),
+    runHttpCheck({ checkRunKey, testType: 'control_http', endpoint: params.controlHttp, networkType: params.networkType, carrier: params.carrier, appState }),
+    Promise.resolve(unavailableDnsRecord({ checkRunKey, endpoint: params.endpoint, networkType: params.networkType, carrier: params.carrier, appState })),
+    runHttpCheck({ checkRunKey, testType: 'http_domain', endpoint: params.endpoint, networkType: params.networkType, carrier: params.carrier, appState }),
+    runWebSocketCheck({ checkRunKey, endpoint: params.endpoint, networkType: params.networkType, carrier: params.carrier, appState }),
+  ]);
   const savedCount = await appendRecords(records);
   return { records, savedCount };
+}
+
+export async function runWebSocketCheck(params: { checkRunKey: string; endpoint?: string; networkType: CanaryNetworkType; carrier?: string | null; appState: CanaryRecord['appState'] }): Promise<CanaryRecord> {
+  const startedAtMs = Date.now();
+  if (!params.endpoint) return makeRecord({ ...params, testType: 'ws_domain', target: 'not_configured', success: false, startedAtMs, errorCategory: 'unknown', errorDetail: 'WebSocket target is not configured' });
+  try {
+    const wsUrl = toWebSocketEndpoint(params.endpoint);
+    await new Promise<void>((resolve, reject) => {
+      const socket = new WebSocket(wsUrl);
+      const timeout = setTimeout(() => { socket.close(); reject(new Error('WebSocket timeout')); }, REQUEST_TIMEOUT_MS);
+      socket.onopen = () => { clearTimeout(timeout); socket.close(); resolve(); };
+      socket.onerror = () => { clearTimeout(timeout); reject(new Error('WebSocket error')); };
+    });
+    return makeRecord({ ...params, testType: 'ws_domain', target: targetHost(params.endpoint), success: true, startedAtMs });
+  } catch (error) {
+    return makeRecord({ ...params, testType: 'ws_domain', target: targetHost(params.endpoint), success: false, startedAtMs, errorCategory: sanitizeErrorCategory(error), errorDetail: 'WebSocket domain request failed' });
+  }
 }

@@ -1,191 +1,67 @@
+import { CHECK_INTERVAL_MS, MANUAL_CHECK_INTERVAL_MS } from '../src/config';
 import {
-  CHECK_INTERVAL_MS,
-  FAILURE_RECOVERY_WINDOW_MS,
-  HOURLY_CHECK_INTERVAL_MS,
-  INITIAL_FAST_WINDOW_MS,
-  MANUAL_CHECK_INTERVAL_MS,
-} from '../src/config';
-import {
-  canRunManualCheck,
+  acquireNativeCycleLease,
+  getMissedCycleRecords,
+  getNativeMissedCycleExpectedAtMs,
   getScheduleState,
-  getManualCheckWaitMs,
-  getScheduledIntervalMs,
+  getScheduledCheckWaitMs,
   shouldRunScheduledCheck,
 } from '../src/schedulePolicy';
-import { CanaryRecord, CanaryTestType } from '../src/types';
+import { CanaryRecord } from '../src/types';
 
-function canaryRecord(params: {
-  timestampUtc: string;
-  checkPairKey: string;
-  testType: CanaryTestType;
-  success: boolean;
-}): CanaryRecord {
+function record(timestampUtc: string, testType: CanaryRecord['testType'] = 'http_domain'): CanaryRecord {
   return {
-    ...params,
+    timestampUtc,
+    checkRunKey: 'run',
+    testType,
+    target: 'canary.example.test',
+    success: true,
+    httpStatus: 204,
     latencyMs: 12,
+    phases: { dnsMs: null, tcpMs: null, tlsMs: null, httpMs: 12 },
+    resolvedIp: null,
     networkType: 'wifi',
-    errorCategory: params.success ? 'none' : 'timeout',
+    carrier: null,
+    appState: 'foreground',
+    errorCategory: 'unknown',
+    errorDetail: null,
   };
 }
 
-function checkPair(params: {
-  timestampMs: number;
-  checkPairKey: string;
-  httpsSuccess: boolean;
-  websocketSuccess: boolean;
-}): CanaryRecord[] {
-  return [
-    canaryRecord({
-      timestampUtc: new Date(params.timestampMs).toISOString(),
-      checkPairKey: params.checkPairKey,
-      testType: 'https',
-      success: params.httpsSuccess,
-    }),
-    canaryRecord({
-      timestampUtc: new Date(params.timestampMs + 1).toISOString(),
-      checkPairKey: params.checkPairKey,
-      testType: 'websocket',
-      success: params.websocketSuccess,
-    }),
-  ];
-}
+describe('15-minute v2 schedule policy', () => {
+  const now = new Date('2026-01-31T12:00:00.000Z');
 
-describe('traffic scheduling policy', () => {
-  const now = new Date(Date.UTC(2026, 0, 31, 12, 0, 0));
-
-  it('uses the fast cadence for the first 24 hours', () => {
-    const firstAttemptUtc = new Date(
-      now.getTime() - INITIAL_FAST_WINDOW_MS + 1,
-    ).toISOString();
-
-    expect(getScheduledIntervalMs({ firstAttemptUtc }, now)).toBe(CHECK_INTERVAL_MS);
-  });
-
-  it('switches to hourly after the initial window', () => {
-    const firstAttemptUtc = new Date(now.getTime() - INITIAL_FAST_WINDOW_MS).toISOString();
-
-    expect(getScheduledIntervalMs({ firstAttemptUtc }, now)).toBe(
-      HOURLY_CHECK_INTERVAL_MS,
-    );
-  });
-
-  it('returns to the fast cadence for an hour after a failed pair', () => {
-    const firstAttemptUtc = new Date(now.getTime() - INITIAL_FAST_WINDOW_MS).toISOString();
-    const lastFailedAttemptUtc = new Date(
-      now.getTime() - FAILURE_RECOVERY_WINDOW_MS + 1,
-    ).toISOString();
-
-    expect(
-      getScheduledIntervalMs({ firstAttemptUtc, lastFailedAttemptUtc }, now),
-    ).toBe(CHECK_INTERVAL_MS);
-  });
-
-  it('falls back to hourly after failure recovery ends', () => {
-    const firstAttemptUtc = new Date(now.getTime() - INITIAL_FAST_WINDOW_MS).toISOString();
-    const lastFailedAttemptUtc = new Date(
-      now.getTime() - FAILURE_RECOVERY_WINDOW_MS,
-    ).toISOString();
-
-    expect(
-      getScheduledIntervalMs({ firstAttemptUtc, lastFailedAttemptUtc }, now),
-    ).toBe(HOURLY_CHECK_INTERVAL_MS);
-  });
-
-  it('keeps hourly cadence after the first 24 hours for a partial pair', () => {
-    const records = [
-      ...checkPair({
-        timestampMs: now.getTime() - INITIAL_FAST_WINDOW_MS,
-        checkPairKey: 'first-success',
-        httpsSuccess: true,
-        websocketSuccess: true,
-      }),
-      ...checkPair({
-        timestampMs: now.getTime() - CHECK_INTERVAL_MS,
-        checkPairKey: 'latest-partial',
-        httpsSuccess: true,
-        websocketSuccess: false,
-      }),
-    ];
-
-    expect(getScheduledIntervalMs(getScheduleState(records), now)).toBe(
-      HOURLY_CHECK_INTERVAL_MS,
-    );
-  });
-
-  it('activates 60-minute fast recovery for a fully failed pair', () => {
-    const records = [
-      ...checkPair({
-        timestampMs: now.getTime() - INITIAL_FAST_WINDOW_MS,
-        checkPairKey: 'first-success',
-        httpsSuccess: true,
-        websocketSuccess: true,
-      }),
-      ...checkPair({
-        timestampMs: now.getTime() - FAILURE_RECOVERY_WINDOW_MS + 1,
-        checkPairKey: 'latest-failed',
-        httpsSuccess: false,
-        websocketSuccess: false,
-      }),
-    ];
-
-    expect(getScheduledIntervalMs(getScheduleState(records), now)).toBe(
-      CHECK_INTERVAL_MS,
-    );
-  });
-
-  it('does not extend completed recovery when a later pair is partial', () => {
-    const records = [
-      ...checkPair({
-        timestampMs: now.getTime() - INITIAL_FAST_WINDOW_MS,
-        checkPairKey: 'first-success',
-        httpsSuccess: true,
-        websocketSuccess: true,
-      }),
-      ...checkPair({
-        timestampMs: now.getTime() - FAILURE_RECOVERY_WINDOW_MS - 1,
-        checkPairKey: 'old-failed',
-        httpsSuccess: false,
-        websocketSuccess: false,
-      }),
-      ...checkPair({
-        timestampMs: now.getTime() - CHECK_INTERVAL_MS,
-        checkPairKey: 'later-partial',
-        httpsSuccess: true,
-        websocketSuccess: false,
-      }),
-    ];
-
-    expect(getScheduleState(records).lastFailedAttemptUtc).toBe(
-      new Date(now.getTime() - FAILURE_RECOVERY_WINDOW_MS).toISOString(),
-    );
-    expect(getScheduledIntervalMs(getScheduleState(records), now)).toBe(
-      HOURLY_CHECK_INTERVAL_MS,
-    );
-  });
-
-  it('runs when there is no previous attempt and respects the chosen interval', () => {
+  it('runs immediately without an attempt and waits exactly 15 minutes after one', () => {
     expect(shouldRunScheduledCheck({}, now)).toBe(true);
-
-    const firstAttemptUtc = new Date(
-      now.getTime() - INITIAL_FAST_WINDOW_MS + 1,
-    ).toISOString();
-    const tooRecent = new Date(now.getTime() - MANUAL_CHECK_INTERVAL_MS + 1).toISOString();
-    const due = new Date(now.getTime() - CHECK_INTERVAL_MS).toISOString();
-
-    expect(shouldRunScheduledCheck({ firstAttemptUtc, lastAttemptUtc: tooRecent }, now)).toBe(false);
-    expect(shouldRunScheduledCheck({ firstAttemptUtc, lastAttemptUtc: due }, now)).toBe(true);
+    const state = getScheduleState([record('2026-01-31T11:45:01.000Z')]);
+    expect(getScheduledCheckWaitMs(state, now)).toBe(1000);
+    expect(shouldRunScheduledCheck(getScheduleState([record('2026-01-31T11:45:00.000Z')]), now)).toBe(true);
+    expect(CHECK_INTERVAL_MS).toBe(15 * 60 * 1000);
+    expect(MANUAL_CHECK_INTERVAL_MS).toBe(CHECK_INTERVAL_MS);
   });
 
-  it('throttles manual checks to one pair per 10 minutes', () => {
-    const lastAttemptUtc = new Date(now.getTime() - MANUAL_CHECK_INTERVAL_MS + 1).toISOString();
+  it('explicitly records every missed scheduled cycle with a permitted category', () => {
+    const missed = getMissedCycleRecords({
+      state: getScheduleState([record('2026-01-31T11:15:00.000Z')]),
+      now,
+      appState: 'background',
+    });
+    expect(missed.map(item => item.testType)).toEqual(['missed_cycle', 'missed_cycle']);
+    expect(missed.every(item => item.errorCategory === 'unknown' && item.errorDetail?.includes('scheduled cycle'))).toBe(true);
+  });
 
-    expect(canRunManualCheck(lastAttemptUtc, now)).toBe(false);
-    expect(getManualCheckWaitMs(lastAttemptUtc, now)).toBe(1);
-    expect(
-      canRunManualCheck(
-        new Date(now.getTime() - MANUAL_CHECK_INTERVAL_MS).toISOString(),
-        now,
-      ),
-    ).toBe(true);
+  it('grants one durable native lease and rejects an overlapping cycle', () => {
+    const first = acquireNativeCycleLease({}, 10_000, 120_000);
+    expect(first.acquired).toBe(true);
+    expect(acquireNativeCycleLease(first.state, 10_001, 120_000).acquired).toBe(false);
+    expect(acquireNativeCycleLease(first.state, 130_000, 120_000).acquired).toBe(true);
+  });
+
+  it('calculates native missed cycles from the persisted completed timestamp', () => {
+    expect(getNativeMissedCycleExpectedAtMs(undefined, 4 * CHECK_INTERVAL_MS)).toEqual([]);
+    expect(getNativeMissedCycleExpectedAtMs(0, 3 * CHECK_INTERVAL_MS + 1)).toEqual([
+      CHECK_INTERVAL_MS,
+      2 * CHECK_INTERVAL_MS,
+    ]);
   });
 });

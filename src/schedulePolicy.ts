@@ -1,117 +1,69 @@
-import {
-  CHECK_INTERVAL_MS,
-  FAILURE_RECOVERY_WINDOW_MS,
-  HOURLY_CHECK_INTERVAL_MS,
-  INITIAL_FAST_WINDOW_MS,
-  MANUAL_CHECK_INTERVAL_MS,
-} from './config';
+import { CHECK_INTERVAL_MS, MANUAL_CHECK_INTERVAL_MS } from './config';
 import { CanaryRecord } from './types';
 
 export interface ScheduleState {
   firstAttemptUtc?: string;
   lastAttemptUtc?: string;
-  lastFailedAttemptUtc?: string;
 }
 
-interface CheckPair {
-  records: CanaryRecord[];
-  lastTimestampUtc: string;
+/** Platform-independent mirror of the native SharedPreferences lease decision. */
+export interface NativeCycleLeaseState {
+  leaseUntilMs?: number;
+  lastNativeCycleCompletedAtMs?: number;
+}
+
+export function acquireNativeCycleLease(
+  state: NativeCycleLeaseState,
+  nowMs: number,
+  leaseDurationMs = 2 * 60 * 1000,
+): { acquired: boolean; state: NativeCycleLeaseState } {
+  if ((state.leaseUntilMs ?? 0) > nowMs) return { acquired: false, state };
+  return { acquired: true, state: { ...state, leaseUntilMs: nowMs + leaseDurationMs } };
+}
+
+export function getNativeMissedCycleExpectedAtMs(
+  lastNativeCycleCompletedAtMs: number | undefined,
+  nowMs: number,
+  intervalMs = CHECK_INTERVAL_MS,
+): number[] {
+  if (lastNativeCycleCompletedAtMs === undefined) return [];
+  const expected: number[] = [];
+  // The runner that observes the gap satisfies the newest due slot; older slots are missed.
+  for (let atMs = lastNativeCycleCompletedAtMs + intervalMs; atMs + intervalMs <= nowMs; atMs += intervalMs) expected.push(atMs);
+  return expected;
 }
 
 function parseUtc(value: string | undefined): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-  const parsed = Date.parse(value);
+  const parsed = value ? Date.parse(value) : Number.NaN;
   return Number.isNaN(parsed) ? undefined : parsed;
 }
 
 export function getScheduleState(records: CanaryRecord[]): ScheduleState {
-  const ordered = [...records].sort(
-    (a, b) => Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc),
-  );
-  const pairs = groupCheckPairs(ordered);
+  const attempts = records
+    .filter(record => record.testType !== 'missed_cycle')
+    .sort((a, b) => Date.parse(a.timestampUtc) - Date.parse(b.timestampUtc));
   return {
-    firstAttemptUtc: ordered[0]?.timestampUtc,
-    lastAttemptUtc: ordered[ordered.length - 1]?.timestampUtc,
-    lastFailedAttemptUtc: [...pairs].reverse().find(isFailedPair)
-      ?.lastTimestampUtc,
+    firstAttemptUtc: attempts[0]?.timestampUtc,
+    lastAttemptUtc: attempts.at(-1)?.timestampUtc,
   };
 }
 
-function groupCheckPairs(ordered: CanaryRecord[]): CheckPair[] {
-  const pairs: CheckPair[] = [];
-  const keyedPairs = new Map<string, CheckPair>();
-  let unkeyedPair: CheckPair | undefined;
-
-  for (const record of ordered) {
-    if (record.checkPairKey) {
-      const pair = keyedPairs.get(record.checkPairKey);
-      if (pair) {
-        pair.records.push(record);
-        pair.lastTimestampUtc = record.timestampUtc;
-      } else {
-        const nextPair = { records: [record], lastTimestampUtc: record.timestampUtc };
-        keyedPairs.set(record.checkPairKey, nextPair);
-        pairs.push(nextPair);
-      }
-      continue;
-    }
-
-    if (!unkeyedPair || unkeyedPair.records.length === 2) {
-      unkeyedPair = { records: [record], lastTimestampUtc: record.timestampUtc };
-      pairs.push(unkeyedPair);
-    } else {
-      unkeyedPair.records.push(record);
-      unkeyedPair.lastTimestampUtc = record.timestampUtc;
-    }
-  }
-
-  return pairs;
+export function getScheduledIntervalMs(): number {
+  return CHECK_INTERVAL_MS;
 }
 
-function isFailedPair(pair: CheckPair): boolean {
-  const testTypes = new Set(pair.records.map(record => record.testType));
-  return (
-    testTypes.has('https') &&
-    testTypes.has('websocket') &&
-    pair.records.every(record => !record.success)
-  );
-}
-
-export function getScheduledIntervalMs(
+export function getScheduledCheckWaitMs(
   state: ScheduleState,
   now = new Date(),
 ): number {
-  const firstAttemptMs = parseUtc(state.firstAttemptUtc);
-  const lastFailedAttemptMs = parseUtc(state.lastFailedAttemptUtc);
-
-  if (
-    firstAttemptMs === undefined ||
-    now.getTime() - firstAttemptMs < INITIAL_FAST_WINDOW_MS
-  ) {
-    return CHECK_INTERVAL_MS;
-  }
-
-  if (
-    lastFailedAttemptMs !== undefined &&
-    now.getTime() - lastFailedAttemptMs < FAILURE_RECOVERY_WINDOW_MS
-  ) {
-    return CHECK_INTERVAL_MS;
-  }
-
-  return HOURLY_CHECK_INTERVAL_MS;
+  const lastAttemptMs = parseUtc(state.lastAttemptUtc);
+  return lastAttemptMs === undefined
+    ? 0
+    : Math.max(0, lastAttemptMs + CHECK_INTERVAL_MS - now.getTime());
 }
 
-export function shouldRunScheduledCheck(
-  state: ScheduleState,
-  now = new Date(),
-): boolean {
-  const lastAttemptMs = parseUtc(state.lastAttemptUtc);
-  if (lastAttemptMs === undefined) {
-    return true;
-  }
-  return now.getTime() - lastAttemptMs >= getScheduledIntervalMs(state, now);
+export function shouldRunScheduledCheck(state: ScheduleState, now = new Date()): boolean {
+  return getScheduledCheckWaitMs(state, now) === 0;
 }
 
 export function getManualCheckWaitMs(
@@ -119,16 +71,12 @@ export function getManualCheckWaitMs(
   now = new Date(),
 ): number {
   const lastAttemptMs = parseUtc(lastAttemptUtc);
-  if (lastAttemptMs === undefined) {
-    return 0;
-  }
-  return Math.max(0, lastAttemptMs + MANUAL_CHECK_INTERVAL_MS - now.getTime());
+  return lastAttemptMs === undefined
+    ? 0
+    : Math.max(0, lastAttemptMs + MANUAL_CHECK_INTERVAL_MS - now.getTime());
 }
 
-export function canRunManualCheck(
-  lastAttemptUtc: string | undefined,
-  now = new Date(),
-): boolean {
+export function canRunManualCheck(lastAttemptUtc: string | undefined, now = new Date()): boolean {
   return getManualCheckWaitMs(lastAttemptUtc, now) === 0;
 }
 
@@ -137,8 +85,56 @@ export function shouldThrottleManualCheck(
   now = new Date(),
 ): { throttled: true; waitMs: number } | { throttled: false } {
   const waitMs = getManualCheckWaitMs(lastAttemptUtc, now);
-  if (waitMs > 0) {
-    return { throttled: true, waitMs };
+  return waitMs > 0 ? { throttled: true, waitMs } : { throttled: false };
+}
+
+export function createMissedCycleRecord(params: {
+  expectedAtUtc: string;
+  observedAtUtc?: string;
+  appState: CanaryRecord['appState'];
+}): CanaryRecord {
+  const timestampUtc = params.observedAtUtc ?? new Date().toISOString();
+  return {
+    timestampUtc,
+    checkRunKey: `missed:${params.expectedAtUtc}`,
+    testType: 'missed_cycle',
+    target: 'scheduled_cycle',
+    success: false,
+    httpStatus: null,
+    latencyMs: 0,
+    phases: { dnsMs: null, tcpMs: null, tlsMs: null, httpMs: null },
+    resolvedIp: null,
+    networkType: 'unknown',
+    carrier: null,
+    appState: params.appState,
+    errorCategory: 'unknown',
+    errorDetail: 'scheduled cycle was not observed at its expected time',
+  };
+}
+
+export function getMissedCycleRecords(params: {
+  state: ScheduleState;
+  now?: Date;
+  appState: CanaryRecord['appState'];
+}): CanaryRecord[] {
+  const now = params.now ?? new Date();
+  const lastAttemptMs = parseUtc(params.state.lastAttemptUtc);
+  if (lastAttemptMs === undefined || now.getTime() - lastAttemptMs <= CHECK_INTERVAL_MS) {
+    return [];
   }
-  return { throttled: false };
+  const missed: CanaryRecord[] = [];
+  for (
+    let expected = lastAttemptMs + CHECK_INTERVAL_MS;
+    expected < now.getTime();
+    expected += CHECK_INTERVAL_MS
+  ) {
+    missed.push(
+      createMissedCycleRecord({
+        expectedAtUtc: new Date(expected).toISOString(),
+        observedAtUtc: now.toISOString(),
+        appState: params.appState,
+      }),
+    );
+  }
+  return missed;
 }

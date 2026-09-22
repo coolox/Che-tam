@@ -5,22 +5,25 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
-    "assetBundlePatterns": [
-      "**/*"
-    ],
-    "ios": {
-      "supportsTablet": false
-    },
+    "assetBundlePatterns": ["**/*"],
+    "icon": "./assets/icon.png",
+    "ios": { "supportsTablet": false },
     "android": {
       "package": "net.hearth.canary",
       "versionCode": 1,
       "permissions": [
         "android.permission.INTERNET",
-        "android.permission.ACCESS_NETWORK_STATE"
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
       ]
     },
     "extra": {
-      "canaryEndpoint": "${EXPO_PUBLIC_CANARY_ENDPOINT}"
+      "canaryEndpoint": "${EXPO_PUBLIC_CANARY_ENDPOINT}",
+      "canaryControlDns": "https://turkmenportal.com/",
+      "canaryControlHttp": "https://www.apple.com/"
     }
   }
 }
