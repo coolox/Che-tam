@@ -1,0 +1,170 @@
+import { Chat, Message, TrafficMode } from './types';
+
+export const INITIAL_CHATS: Chat[] = [
+  {
+    id: 'parents',
+    name: 'Мама и папа',
+    initials: 'МП',
+    avatarColor: '#116149',
+    lastMessage: 'Созвонимся после ужина, если связь будет ровная.',
+    time: '12:10',
+    unread: 2,
+    trafficLabel: 'Экономный профиль',
+    pinned: true,
+  },
+  {
+    id: 'sister',
+    name: 'Лейла',
+    initials: 'Л',
+    avatarColor: '#7c4f2c',
+    lastMessage: 'Отправила расписание на выходные.',
+    time: '11:42',
+    unread: 0,
+    trafficLabel: 'Минимум медиа',
+    pinned: false,
+  },
+  {
+    id: 'grandma',
+    name: 'Бабушка Нина',
+    initials: 'БН',
+    avatarColor: '#8a4f7d',
+    lastMessage: 'Жду фото детей, когда будет Wi-Fi.',
+    time: 'Вчера',
+    unread: 1,
+    trafficLabel: 'Только важное',
+    pinned: false,
+  },
+  {
+    id: 'brother',
+    name: 'Руслан',
+    initials: 'Р',
+    avatarColor: '#2f668f',
+    lastMessage: 'Проверил домашний узел, индикатор зелёный.',
+    time: 'Пн',
+    unread: 0,
+    trafficLabel: 'Полный профиль',
+    pinned: false,
+  },
+  {
+    id: 'family',
+    name: 'Семейный круг',
+    initials: 'СК',
+    avatarColor: '#b25d32',
+    lastMessage: 'В субботу общий звонок в 19:00.',
+    time: 'Пн',
+    unread: 4,
+    trafficLabel: 'Видео 240p',
+    pinned: true,
+  },
+  {
+    id: 'cousin',
+    name: 'Дина',
+    initials: 'Д',
+    avatarColor: '#4e6f51',
+    lastMessage: 'Сохранила рецепт, спасибо!',
+    time: 'Вс',
+    unread: 0,
+    trafficLabel: 'Экономный профиль',
+    pinned: false,
+  },
+];
+
+export const INITIAL_MESSAGES: Record<string, Message[]> = {
+  parents: [
+    {
+      id: 'parents-1',
+      chatId: 'parents',
+      sender: 'relative',
+      text: 'Как дети? Получилось подключиться к Wi-Fi?',
+      createdAt: '2026-09-22T08:15:00.000Z',
+      delivered: true,
+    },
+    {
+      id: 'parents-2',
+      chatId: 'parents',
+      sender: 'me',
+      text: 'Да, вечером покажем новый рисунок по видеозвонку.',
+      createdAt: '2026-09-22T08:17:00.000Z',
+      delivered: true,
+    },
+    {
+      id: 'parents-3',
+      chatId: 'parents',
+      sender: 'relative',
+      text: 'Созвонимся после ужина, если связь будет ровная.',
+      createdAt: '2026-09-22T09:10:00.000Z',
+      delivered: true,
+    },
+  ],
+  sister: [
+    {
+      id: 'sister-1',
+      chatId: 'sister',
+      sender: 'relative',
+      text: 'Отправила расписание на выходные.',
+      createdAt: '2026-09-22T08:42:00.000Z',
+      delivered: true,
+    },
+  ],
+  grandma: [
+    {
+      id: 'grandma-1',
+      chatId: 'grandma',
+      sender: 'relative',
+      text: 'Жду фото детей, когда будет Wi-Fi.',
+      createdAt: '2026-09-21T15:20:00.000Z',
+      delivered: true,
+    },
+  ],
+  brother: [
+    {
+      id: 'brother-1',
+      chatId: 'brother',
+      sender: 'relative',
+      text: 'Проверил домашний узел, индикатор зелёный.',
+      createdAt: '2026-09-21T13:00:00.000Z',
+      delivered: true,
+    },
+  ],
+  family: [
+    {
+      id: 'family-1',
+      chatId: 'family',
+      sender: 'relative',
+      text: 'В субботу общий звонок в 19:00.',
+      createdAt: '2026-09-21T12:30:00.000Z',
+      delivered: true,
+    },
+  ],
+  cousin: [
+    {
+      id: 'cousin-1',
+      chatId: 'cousin',
+      sender: 'relative',
+      text: 'Сохранила рецепт, спасибо!',
+      createdAt: '2026-09-20T17:40:00.000Z',
+      delivered: true,
+    },
+  ],
+};
+
+export const FAMILY_MEMBERS = [
+  { name: 'Айгуль М.', initials: 'АМ', role: 'Вы · Турция', color: '#116149' },
+  { name: 'Мама и папа', initials: 'МП', role: 'Ашхабад · чаще звонки вечером', color: '#705f3b' },
+  { name: 'Лейла', initials: 'Л', role: 'Стамбул · помогает с расписанием', color: '#7c4f2c' },
+  { name: 'Руслан', initials: 'Р', role: 'Домашний узел · демо-статус', color: '#2f668f' },
+  { name: 'Бабушка Нина', initials: 'БН', role: 'Любит короткие видеосообщения', color: '#8a4f7d' },
+];
+
+export const TRAFFIC_MODES: TrafficMode[] = [
+  { key: 'full', label: 'Полный', description: 'Лучшее качество при хорошем Wi-Fi, видео до 360p.' },
+  { key: 'economy', label: 'Экономный', description: 'Баланс для обычных семейных звонков: видео 240p, примерно 4 МБ/мин.' },
+  { key: 'minimal', label: 'Минимальный', description: 'Текст, аудио и короткие видеосообщения при слабой связи.' },
+];
+
+export const CALL_STEPS = [
+  'соединяем напрямую',
+  'проверяем домашний узел',
+  'готовим запасной ретранслятор',
+  'держим качество без лишнего трафика',
+];

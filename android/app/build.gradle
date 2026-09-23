@@ -92,16 +92,8 @@ android {
         applicationId 'net.hearth.canary'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "0.1.0"
-        // Public monitoring endpoint. A build-time environment value can override it;
-        // the fallback prevents the native foreground service from receiving an empty placeholder.
-        def canaryEndpoint = System.getenv("EXPO_PUBLIC_CANARY_ENDPOINT") ?: "https://vmi3376157.contaboserver.net/hearth-canary/"
-        def canaryControlDns = System.getenv("EXPO_PUBLIC_CANARY_CONTROL_DNS") ?: "https://turkmenportal.com/"
-        def canaryControlHttp = System.getenv("EXPO_PUBLIC_CANARY_CONTROL_HTTP") ?: "https://www.apple.com/"
-        buildConfigField "String", "CANARY_ENDPOINT", "\"${canaryEndpoint}\""
-        buildConfigField "String", "CANARY_CONTROL_DNS", "\"${canaryControlDns}\""
-        buildConfigField "String", "CANARY_CONTROL_HTTP", "\"${canaryControlHttp}\""
+        versionCode 2
+        versionName "0.5.0"
 
         buildConfigField "String", "REACT_NATIVE_RELEASE_LEVEL", "\"${findProperty('reactNativeReleaseLevel') ?: 'stable'}\""
     }
@@ -163,7 +155,6 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
-    implementation("androidx.work:work-runtime-ktx:2.10.0")
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";
