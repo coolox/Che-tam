@@ -40,6 +40,10 @@ Link the relevant headings in `../spec.md` and record any decisions made after t
 - No deployment, infrastructure changes, external messages, or external write APIs.
 - No unrelated dependency upgrade or refactor.
 - Stop and report a blocker rather than guessing product behavior.
+- **Codex/Fatima never runs builds: no `expo prebuild`, `gradlew`, native
+  compile, emulator, or physical device.** Her task ends at code + tests +
+  lint/typecheck green. Building, signing, and device verification are always
+  a separate step Hermes runs directly afterward.
 
 ## Codex prompt
 

@@ -15,8 +15,17 @@
 3. Persist `lastNativeCycleStartedAtUtc` / `lastNativeCycleCompletedAtUtc` and record missed cycles natively when the next native runner observes schedule gaps.
 4. Make the persistent notification report last completed native cycle and active status, so device-side diagnosis is possible.
 5. Do not promise exact WorkManager timing. The app documentation/UI must say “примерно каждые 15 минут”; foreground service is the intended cadence.
-6. Tests must cover lease decision and missed-cycle calculation in a platform-independent Kotlin-free TypeScript model if practical; release Kotlin must compile.
+6. Tests must cover lease decision and missed-cycle calculation in a platform-independent Kotlin-free TypeScript model if practical.
 
 ## Verification
 
-After the fix, require a fresh 24-hour journal. Acceptance metric is evaluated only for clean native `native_service`/`workmanager` runs from that build, excluding historic JS fallback and prior-build records.
+**Fatima's scope ends at code + tests + lint/typecheck.** She edits the Kotlin
+source but does NOT compile, build, prebuild, run gradle, or touch a
+device/emulator to confirm the Kotlin compiles — that compile/build check is a
+separate step Hermes runs directly afterward, before the 24-hour journal
+collection.
+
+After Hermes's build step confirms the Kotlin compiles, a fresh 24-hour
+journal is required. Acceptance metric is evaluated only for clean native
+`native_service`/`workmanager` runs from that build, excluding historic JS
+fallback and prior-build records.

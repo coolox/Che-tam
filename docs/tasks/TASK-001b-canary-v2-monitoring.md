@@ -29,4 +29,13 @@ One Russian screen: status, last check, completed count, manual “Провер�
 
 ## Verification required before delivery
 
-Lint, TypeScript, focused unit tests for record mapping/storage/retention/scheduling and a release APK build. Verify manifest permissions are limited to monitoring/background needs and no unintended sensitive permissions appear. Never claim the 24-hour 80% background requirement or Turkey/control success without real device journal evidence.
+**Fatima's scope ends at code + tests.** Run lint, TypeScript, and focused unit
+tests for record mapping/storage/retention/scheduling. Fatima does NOT build,
+prebuild, run gradle, or touch a device/emulator — that is a separate step
+Hermes runs directly afterward.
+
+The release APK build, manifest-permission review, and device journal
+evidence collection happen in that separate Hermes-run step, not inside
+Fatima's task. Never claim the 24-hour 80% background requirement or
+Turkey/control success without real device journal evidence gathered after
+that build.

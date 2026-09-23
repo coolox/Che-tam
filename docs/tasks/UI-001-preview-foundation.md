@@ -21,7 +21,10 @@ Create only within `/root/projects/hearth-preview/`:
 
 - Expo/TypeScript config and package files.
 - `App.tsx`, `src/`, `assets/`, focused tests and README.
-- Android generated project only after prebuild, if needed for APK delivery.
+- **Fatima does not run `expo prebuild`, `gradlew`, or any Android build/compile
+  step.** If an Android generated project is needed for APK delivery, that
+  prebuild/build step is run separately by Hermes after Fatima's code is
+  reviewed and accepted.
 
 ## Must not do
 
