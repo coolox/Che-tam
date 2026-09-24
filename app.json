@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "Hearth Canary",
+    "name": "Чё-Там",
     "slug": "hearth-canary",
     "version": "0.5.0",
     "orientation": "portrait",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [
       "**/*"
     ],

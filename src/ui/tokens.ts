@@ -1,4 +1,4 @@
-export const colors = {
+export const lightColors = {
   accent: '#116149',
   accentDark: '#0a3c2d',
   accentSoft: '#dceee7',
@@ -16,6 +16,27 @@ export const colors = {
   textSecondary: '#3f4b44',
   videoSurface: '#293b48',
 };
+
+export const darkColors: ThemeColors = {
+  accent: '#5fd39f',
+  accentDark: '#b8f0d2',
+  accentSoft: '#173a2d',
+  background: '#101612',
+  border: '#304139',
+  callBackground: '#08130f',
+  callMuted: '#aec6bb',
+  callPanel: '#193127',
+  danger: '#f06f64',
+  outgoing: '#1d4f38',
+  success: '#71d69a',
+  surface: '#18231d',
+  text: '#edf5ef',
+  textMuted: '#9aa9a1',
+  textSecondary: '#c7d4cc',
+  videoSurface: '#172838',
+};
+
+export type ThemeColors = typeof lightColors;
 
 export const spacing = {
   xs: 4,

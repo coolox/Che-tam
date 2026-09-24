@@ -1,4 +1,4 @@
-import { Chat, Message, TrafficMode } from './types';
+import { Chat, Message, ThemeOption, TrafficMode } from './types';
 
 export const INITIAL_CHATS: Chat[] = [
   {
@@ -162,9 +162,8 @@ export const TRAFFIC_MODES: TrafficMode[] = [
   { key: 'minimal', label: 'Минимальный', description: 'Текст, аудио и короткие видеосообщения при слабой связи.' },
 ];
 
-export const CALL_STEPS = [
-  'соединяем напрямую',
-  'проверяем домашний узел',
-  'готовим запасной ретранслятор',
-  'держим качество без лишнего трафика',
+export const THEME_OPTIONS: ThemeOption[] = [
+  { key: 'system', label: 'Системная' },
+  { key: 'light', label: 'Светлая' },
+  { key: 'dark', label: 'Тёмная' },
 ];

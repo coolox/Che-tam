@@ -2,6 +2,8 @@ export type TabKey = 'chats' | 'calls' | 'family' | 'settings';
 
 export type TrafficModeKey = 'full' | 'economy' | 'minimal';
 
+export type ThemePreference = 'system' | 'light' | 'dark';
+
 export type Chat = {
   id: string;
   name: string;
@@ -27,4 +29,9 @@ export type TrafficMode = {
   key: TrafficModeKey;
   label: string;
   description: string;
+};
+
+export type ThemeOption = {
+  key: ThemePreference;
+  label: string;
 };

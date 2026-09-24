@@ -1,5 +1,6 @@
 import { INITIAL_CHATS, INITIAL_MESSAGES } from '../src/ui/demoData';
 import { appendOutgoingMessage, getOrderedChats, searchChats, selectTab, togglePinnedChat } from '../src/ui/state';
+import { darkColors, lightColors } from '../src/ui/tokens';
 
 describe('UI Preview local behavior', () => {
   it('filters chats by family name or last message', () => {
@@ -32,5 +33,9 @@ describe('UI Preview local behavior', () => {
   it('selects bottom tab state locally', () => {
     expect(selectTab('chats', 'settings')).toBe('settings');
     expect(selectTab('settings', 'family')).toBe('family');
+  });
+
+  it('keeps light and dark theme token keys aligned', () => {
+    expect(Object.keys(darkColors).sort()).toEqual(Object.keys(lightColors).sort());
   });
 });

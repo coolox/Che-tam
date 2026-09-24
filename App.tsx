@@ -1,23 +1,28 @@
 import { StatusBar } from 'expo-status-bar';
-import { useMemo, useState } from 'react';
+import { Ear, Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff, Volume2 } from 'lucide-react-native';
+import type { ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { KeyboardAvoidingView, KeyboardChatScrollView, KeyboardProvider } from 'react-native-keyboard-controller';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
-  KeyboardAvoidingView,
+  BackHandler,
+  PanResponder,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   Switch,
   Text,
   TextInput,
   View,
+  useWindowDimensions,
 } from 'react-native';
 
 import {
-  CALL_STEPS,
   FAMILY_MEMBERS,
   INITIAL_CHATS,
   INITIAL_MESSAGES,
+  THEME_OPTIONS,
   TRAFFIC_MODES,
 } from './src/ui/demoData';
 import {
@@ -28,13 +33,27 @@ import {
   selectTab,
   togglePinnedChat,
 } from './src/ui/state';
-import { colors, radius, spacing, typography } from './src/ui/tokens';
+import { ThemeProvider, useTheme } from './src/ui/theme';
+import { radius, spacing, typography, type ThemeColors } from './src/ui/tokens';
 import { Chat, Message, TabKey, TrafficModeKey } from './src/ui/types';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
+type AudioRoute = 'speaker' | 'earpiece';
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <KeyboardProvider>
+        <ThemeProvider>
+          <ThemedApp />
+        </ThemeProvider>
+      </KeyboardProvider>
+    </SafeAreaProvider>
+  );
+}
+
+function ThemedApp() {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState(INITIAL_CHATS[0].id);
@@ -47,12 +66,36 @@ export default function App() {
   const [callMode, setCallMode] = useState<CallMode>('audio');
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
-  const [speakerOn, setSpeakerOn] = useState(true);
+  const [audioRoute, setAudioRoute] = useState<AudioRoute>('speaker');
+  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
   const [connectionHints, setConnectionHints] = useState(true);
 
+  const { mode } = useTheme();
+  const styles = useStyles();
   const orderedChats = useMemo(() => getOrderedChats(chats, query), [chats, query]);
   const selectedChat = chats.find(chat => chat.id === selectedChatId) ?? chats[0];
   const selectedMessages = messagesByChat[selectedChat.id] ?? [];
+
+  const goBack = () => {
+    if (screen === 'call') {
+      setScreen('conversation');
+      return true;
+    }
+    if (screen === 'conversation') {
+      setScreen('home');
+      return true;
+    }
+    if (screen === 'home' && activeTab !== 'chats') {
+      setActiveTab('chats');
+      return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
+    return () => subscription.remove();
+  }, [screen, activeTab]);
 
   const enterDemo = () => {
     setActiveTab('chats');
@@ -82,12 +125,14 @@ export default function App() {
 
   const startCall = (mode: CallMode) => {
     setCallMode(mode);
+    setCameraOff(false);
+    setCameraFacing('front');
     setScreen('call');
   };
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+    <View style={styles.safeArea}>
+      <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
       {screen === 'welcome' ? (
         <WelcomeScreen expanded={expandedWelcome} onDemo={enterDemo} onToggleInfo={() => setExpandedWelcome(value => !value)} />
       ) : null}
@@ -120,17 +165,19 @@ export default function App() {
       {screen === 'call' ? (
         <CallScreen
           cameraOff={cameraOff}
+          cameraFacing={cameraFacing}
           chat={selectedChat}
           mode={callMode}
           muted={muted}
-          speakerOn={speakerOn}
+          audioRoute={audioRoute}
           onEnd={() => setScreen('conversation')}
           onToggleCamera={() => setCameraOff(value => !value)}
+          onToggleCameraFacing={() => setCameraFacing(value => (value === 'front' ? 'back' : 'front'))}
           onToggleMuted={() => setMuted(value => !value)}
-          onToggleSpeaker={() => setSpeakerOn(value => !value)}
+          onToggleAudioRoute={() => setAudioRoute(value => (value === 'speaker' ? 'earpiece' : 'speaker'))}
         />
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -143,12 +190,13 @@ function WelcomeScreen({
   onDemo: () => void;
   onToggleInfo: () => void;
 }) {
+  const styles = useStyles();
   return (
     <ScrollView contentContainerStyle={styles.welcome}>
       <View style={styles.brandMark}>
-        <Text style={styles.brandMarkText}>H</Text>
+        <Text style={styles.brandMarkText}>Ч</Text>
       </View>
-      <Text style={styles.heroTitle}>Hearth</Text>
+      <Text style={styles.heroTitle}>Чё-Там</Text>
       <Text style={styles.heroText}>Тёплое место для семейных разговоров, сообщений и звонков на слабой связи.</Text>
       <Pressable accessibilityRole="button" onPress={onDemo} style={styles.primaryButton}>
         <Text style={styles.primaryButtonText}>Посмотреть демо</Text>
@@ -194,6 +242,7 @@ function HomeScreen({
   onSetTrafficMode: (value: TrafficModeKey) => void;
   onTogglePinned: (chatId: string) => void;
 }) {
+  const styles = useStyles();
   return (
     <View style={styles.appShell}>
       <Header subtitle={activeTab === 'chats' ? 'Семейные разговоры' : undefined} />
@@ -218,10 +267,11 @@ function HomeScreen({
 }
 
 function Header({ subtitle }: { subtitle?: string }) {
+  const styles = useStyles();
   return (
     <View style={styles.header}>
       <View>
-        <Text style={styles.headerTitle}>Hearth</Text>
+        <Text style={styles.headerTitle}>Чё-Там</Text>
         {subtitle ? <Text style={styles.headerSubtitle}>{subtitle}</Text> : null}
       </View>
       <View style={styles.statusPill}>
@@ -244,6 +294,8 @@ function ChatList({
   onQuery: (value: string) => void;
   onTogglePinned: (chatId: string) => void;
 }) {
+  const { colors } = useTheme();
+  const styles = useStyles();
   return (
     <View style={styles.stack}>
       <TextInput
@@ -315,8 +367,11 @@ function ConversationScreen({
   onSend: () => void;
   onStartCall: (mode: CallMode) => void;
 }) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const styles = useStyles();
   return (
-    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.appShell}>
+    <KeyboardAvoidingView automaticOffset behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.appShell}>
       <View style={styles.conversationHeader}>
         <Pressable accessibilityRole="button" onPress={onBack} style={styles.iconButton}>
           <Text style={styles.iconButtonText}>‹</Text>
@@ -337,7 +392,11 @@ function ConversationScreen({
           <Text style={styles.headerActionText}>Видео</Text>
         </Pressable>
       </View>
-      <ScrollView contentContainerStyle={styles.messages}>
+      <KeyboardChatScrollView
+        contentContainerStyle={styles.messages}
+        keyboardLiftBehavior="whenAtEnd"
+        offset={insets.bottom}
+      >
         <Text style={styles.dateDivider}>Сегодня</Text>
         {messages.map(message => (
           <View key={message.id} style={[styles.messageBubble, message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble]}>
@@ -347,7 +406,7 @@ function ConversationScreen({
             </Text>
           </View>
         ))}
-      </ScrollView>
+      </KeyboardChatScrollView>
       <View style={styles.composer}>
         <Pressable accessibilityRole="button" style={styles.attachButton}>
           <Text style={styles.attachText}>＋</Text>
@@ -370,68 +429,282 @@ function ConversationScreen({
 }
 
 function CallScreen({
+  audioRoute,
   cameraOff,
+  cameraFacing,
   chat,
   mode,
   muted,
-  speakerOn,
   onEnd,
+  onToggleAudioRoute,
   onToggleCamera,
+  onToggleCameraFacing,
   onToggleMuted,
-  onToggleSpeaker,
 }: {
+  audioRoute: AudioRoute;
   cameraOff: boolean;
+  cameraFacing: 'front' | 'back';
   chat: Chat;
   mode: CallMode;
   muted: boolean;
-  speakerOn: boolean;
   onEnd: () => void;
+  onToggleAudioRoute: () => void;
   onToggleCamera: () => void;
+  onToggleCameraFacing: () => void;
   onToggleMuted: () => void;
-  onToggleSpeaker: () => void;
 }) {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const dimensions = useWindowDimensions();
+  const styles = useStyles();
+  const [connected, setConnected] = useState(mode === 'audio');
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [controlsVisible, setControlsVisible] = useState(true);
+  const [pip, setPip] = useState(() => ({ x: dimensions.width - 132, y: insets.top + 84 }));
+  const dragStart = useRef(pip);
+  const movedDuringGesture = useRef(false);
+
+  useEffect(() => {
+    setConnected(mode === 'audio');
+    setElapsedSeconds(0);
+    setControlsVisible(true);
+    setPip({ x: dimensions.width - 132, y: insets.top + 84 });
+    if (mode === 'audio') {
+      return undefined;
+    }
+    const timer = setTimeout(() => setConnected(true), 1800);
+    return () => clearTimeout(timer);
+  }, [chat.id, dimensions.width, insets.top, mode]);
+
+  useEffect(() => {
+    if (!connected) {
+      return undefined;
+    }
+    const timer = setInterval(() => setElapsedSeconds(value => value + 1), 1000);
+    return () => clearInterval(timer);
+  }, [connected]);
+
+  const pipBounds = {
+    maxX: Math.max(spacing.md, dimensions.width - 116 - spacing.md),
+    maxY: Math.max(insets.top + spacing.md, dimensions.height - insets.bottom - 164),
+    minX: spacing.md,
+    minY: insets.top + spacing.md,
+  };
+  const clampPip = (x: number, y: number) => ({
+    x: Math.min(Math.max(x, pipBounds.minX), pipBounds.maxX),
+    y: Math.min(Math.max(y, pipBounds.minY), pipBounds.maxY),
+  });
+
+  const panResponder = useMemo(
+    () =>
+      PanResponder.create({
+        onMoveShouldSetPanResponder: (_, gesture) => Math.abs(gesture.dx) > 4 || Math.abs(gesture.dy) > 4,
+        onPanResponderGrant: () => {
+          dragStart.current = pip;
+          movedDuringGesture.current = false;
+        },
+        onPanResponderMove: (_, gesture) => {
+          movedDuringGesture.current = true;
+          setPip(clampPip(dragStart.current.x + gesture.dx, dragStart.current.y + gesture.dy));
+        },
+      }),
+    [pip, pipBounds.maxX, pipBounds.maxY, pipBounds.minX, pipBounds.minY],
+  );
+
+  const elapsed = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+  const toggleControls = () => {
+    if (movedDuringGesture.current) {
+      movedDuringGesture.current = false;
+      return;
+    }
+    setControlsVisible(value => !value);
+  };
+
+  if (mode === 'audio') {
+    return (
+      <View style={styles.audioCallScreen}>
+        <Text style={styles.callLabel}>Исходящий аудиозвонок</Text>
+        <View style={[styles.callAvatar, { backgroundColor: chat.avatarColor }]}>
+          <Text style={styles.callAvatarText}>{chat.initials}</Text>
+        </View>
+        <Text style={styles.callName}>{chat.name}</Text>
+        <Text style={styles.callQuality}>{connected ? elapsed : 'Вызов...'}</Text>
+        <CallControls
+          audioRoute={audioRoute}
+          cameraOff={cameraOff}
+          mode={mode}
+          muted={muted}
+          onEnd={onEnd}
+          onToggleAudioRoute={onToggleAudioRoute}
+          onToggleCamera={onToggleCamera}
+          onToggleCameraFacing={onToggleCameraFacing}
+          onToggleMuted={onToggleMuted}
+        />
+      </View>
+    );
+  }
+
   return (
-    <View style={styles.callScreen}>
-      <Text style={styles.callLabel}>Исходящий {mode === 'video' ? 'видеозвонок' : 'аудиозвонок'}</Text>
-      <View style={[styles.callAvatar, { backgroundColor: chat.avatarColor }]}>
-        <Text style={styles.callAvatarText}>{chat.initials}</Text>
-      </View>
-      <Text style={styles.callName}>{chat.name}</Text>
-      <Text style={styles.callQuality}>{mode === 'video' ? 'видео 240p, ~4 МБ/мин' : 'аудио, ~0,4 МБ/мин'}</Text>
-      <View style={styles.callSteps}>
-        {CALL_STEPS.map(step => (
-          <View key={step} style={styles.callStepRow}>
-            <View style={styles.callDot} />
-            <Text style={styles.callStepText}>{step}</Text>
-          </View>
-        ))}
-      </View>
-      {mode === 'video' ? (
-        <View style={styles.videoMock}>
-          <Text style={styles.videoText}>{cameraOff ? 'Камера выключена' : 'Макет видео без доступа к камере'}</Text>
+    <View style={styles.videoCallScreen}>
+      <Pressable onPress={toggleControls} style={StyleSheet.absoluteFill}>
+        <MockVideoSurface
+          cameraFacing={connected ? 'back' : cameraFacing}
+          cameraOff={connected ? false : cameraOff}
+          color={connected ? chat.avatarColor : colors.accent}
+          label={connected ? chat.name : 'Вы'}
+        />
+      </Pressable>
+      {controlsVisible ? (
+        <View pointerEvents="none" style={styles.videoTopOverlay}>
+          <Text numberOfLines={1} style={styles.videoCallName}>
+            {chat.name}
+          </Text>
+          <Text style={styles.videoCallStatus}>{connected ? elapsed : 'Вызов...'}</Text>
         </View>
       ) : null}
-      <View style={styles.callControls}>
-        <ToggleButton active={!muted} label={muted ? 'Микрофон выкл.' : 'Микрофон'} onPress={onToggleMuted} />
-        {mode === 'video' ? <ToggleButton active={!cameraOff} label={cameraOff ? 'Камера выкл.' : 'Камера'} onPress={onToggleCamera} /> : null}
-        <ToggleButton active={speakerOn} label={speakerOn ? 'Динамик' : 'Тихо'} onPress={onToggleSpeaker} />
-      </View>
-      <Pressable accessibilityRole="button" onPress={onEnd} style={styles.endCallButton}>
-        <Text style={styles.endCallText}>Завершить</Text>
-      </Pressable>
+      {connected ? (
+        <View {...panResponder.panHandlers} style={[styles.pipVideo, { left: pip.x, top: pip.y }]}>
+          <MockVideoSurface cameraFacing={cameraFacing} cameraOff={cameraOff} color={colors.accent} label="Вы" compact />
+        </View>
+      ) : null}
+      {controlsVisible ? (
+        <View style={styles.floatingControls}>
+          <CallControls
+            audioRoute={audioRoute}
+            cameraOff={cameraOff}
+            mode={mode}
+            muted={muted}
+            onEnd={onEnd}
+            onToggleAudioRoute={onToggleAudioRoute}
+            onToggleCamera={onToggleCamera}
+            onToggleCameraFacing={onToggleCameraFacing}
+            onToggleMuted={onToggleMuted}
+          />
+        </View>
+      ) : null}
     </View>
   );
 }
 
-function ToggleButton({ active, label, onPress }: { active: boolean; label: string; onPress: () => void }) {
+function MockVideoSurface({
+  cameraFacing,
+  cameraOff,
+  color,
+  compact = false,
+  label,
+}: {
+  cameraFacing: 'front' | 'back';
+  cameraOff: boolean;
+  color: string;
+  compact?: boolean;
+  label: string;
+}) {
+  const styles = useStyles();
+  if (cameraOff) {
+    return (
+      <View style={styles.videoOffSurface}>
+        <VideoOff color="#ffffff" size={compact ? 22 : 34} strokeWidth={2.4} />
+      </View>
+    );
+  }
   return (
-    <Pressable accessibilityRole="button" onPress={onPress} style={[styles.toggleButton, active && styles.toggleButtonActive]}>
-      <Text style={[styles.toggleButtonText, active && styles.toggleButtonTextActive]}>{label}</Text>
+    <View style={[styles.mockVideoSurface, { backgroundColor: color }]}>
+      <View style={styles.mockVideoGlow} />
+      <Text numberOfLines={1} style={compact ? styles.mockVideoCompactText : styles.mockVideoText}>
+        {label}
+      </Text>
+      <Text style={compact ? styles.mockVideoCompactMeta : styles.mockVideoMeta}>{cameraFacing === 'front' ? 'front' : 'back'}</Text>
+    </View>
+  );
+}
+
+function CallControls({
+  audioRoute,
+  cameraOff,
+  mode,
+  muted,
+  onEnd,
+  onToggleAudioRoute,
+  onToggleCamera,
+  onToggleCameraFacing,
+  onToggleMuted,
+}: {
+  audioRoute: AudioRoute;
+  cameraOff: boolean;
+  mode: CallMode;
+  muted: boolean;
+  onEnd: () => void;
+  onToggleAudioRoute: () => void;
+  onToggleCamera: () => void;
+  onToggleCameraFacing: () => void;
+  onToggleMuted: () => void;
+}) {
+  const styles = useStyles();
+  const iconColor = '#ffffff';
+  const disabledIconColor = '#10231c';
+  return (
+    <View style={styles.callControls}>
+      <IconCallButton
+        accessibilityLabel={muted ? 'Включить микрофон' : 'Выключить микрофон'}
+        active={!muted}
+        icon={muted ? <MicOff color={disabledIconColor} size={26} /> : <Mic color={iconColor} size={26} />}
+        onPress={onToggleMuted}
+      />
+      {mode === 'video' ? (
+        <IconCallButton
+          accessibilityLabel={cameraOff ? 'Включить камеру' : 'Выключить камеру'}
+          active={!cameraOff}
+          icon={cameraOff ? <VideoOff color={disabledIconColor} size={26} /> : <Video color={iconColor} size={26} />}
+          onPress={onToggleCamera}
+        />
+      ) : null}
+      <IconCallButton
+        accessibilityLabel={audioRoute === 'speaker' ? 'Переключить на разговорный динамик' : 'Включить громкую связь'}
+        active
+        icon={audioRoute === 'speaker' ? <Volume2 color={iconColor} size={26} /> : <Ear color={iconColor} size={26} />}
+        onPress={onToggleAudioRoute}
+      />
+      {mode === 'video' ? (
+        <IconCallButton
+          accessibilityLabel="Сменить камеру"
+          active
+          icon={<SwitchCamera color={iconColor} size={26} />}
+          onPress={onToggleCameraFacing}
+        />
+      ) : null}
+      <IconCallButton accessibilityLabel="Завершить звонок" danger icon={<PhoneOff color={iconColor} size={26} />} onPress={onEnd} />
+    </View>
+  );
+}
+
+function IconCallButton({
+  accessibilityLabel,
+  active = true,
+  danger = false,
+  icon,
+  onPress,
+}: {
+  accessibilityLabel: string;
+  active?: boolean;
+  danger?: boolean;
+  icon: ReactNode;
+  onPress: () => void;
+}) {
+  const styles = useStyles();
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="button"
+      onPress={onPress}
+      style={[styles.callIconButton, !active && styles.callIconButtonOff, danger && styles.callIconButtonDanger]}
+    >
+      {icon}
     </Pressable>
   );
 }
 
 function CallsTab() {
+  const styles = useStyles();
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>Звонки</Text>
@@ -448,6 +721,7 @@ function CallsTab() {
 }
 
 function FamilyTab() {
+  const styles = useStyles();
   return (
     <View style={styles.stack}>
       <Text style={styles.sectionTitle}>Семья</Text>
@@ -477,6 +751,8 @@ function SettingsTab({
   onSetConnectionHints: (value: boolean) => void;
   onSetTrafficMode: (value: TrafficModeKey) => void;
 }) {
+  const { colors, preference, setPreference } = useTheme();
+  const styles = useStyles();
   const selectedMode = TRAFFIC_MODES.find(mode => mode.key === trafficMode) ?? TRAFFIC_MODES[1];
   return (
     <View style={styles.stack}>
@@ -507,6 +783,21 @@ function SettingsTab({
         <Text style={styles.bodyText}>{selectedMode.description}</Text>
       </View>
       <View style={styles.infoPanel}>
+        <Text style={styles.infoTitle}>Тема</Text>
+        <View style={styles.segmented}>
+          {THEME_OPTIONS.map(option => (
+            <Pressable
+              accessibilityRole="button"
+              key={option.key}
+              onPress={() => setPreference(option.key)}
+              style={[styles.segment, preference === option.key && styles.segmentActive]}
+            >
+              <Text style={[styles.segmentText, preference === option.key && styles.segmentTextActive]}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
+      <View style={styles.infoPanel}>
         <Text style={styles.infoTitle}>Расход за месяц</Text>
         <Text style={styles.usageNumber}>184 МБ</Text>
         <Text style={styles.bodyText}>Демо-оценка: сообщения 12 МБ, звонки 172 МБ.</Text>
@@ -516,7 +807,12 @@ function SettingsTab({
         <Text style={styles.bodyText}>Сейчас показан макет: прямое соединение доступно, запасной ретранслятор готов.</Text>
         <View style={styles.switchRow}>
           <Text style={styles.bodyText}>Показывать подсказки качества</Text>
-          <Switch onValueChange={onSetConnectionHints} value={connectionHints} />
+          <Switch
+            onValueChange={onSetConnectionHints}
+            thumbColor={connectionHints ? colors.accent : colors.surface}
+            trackColor={{ false: colors.border, true: colors.accentSoft }}
+            value={connectionHints}
+          />
         </View>
       </View>
     </View>
@@ -524,6 +820,7 @@ function SettingsTab({
 }
 
 function BottomTabs({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (tab: TabKey) => void }) {
+  const styles = useStyles();
   const tabs: { key: TabKey; label: string }[] = [
     { key: 'chats', label: 'Чаты' },
     { key: 'calls', label: 'Звонки' },
@@ -542,10 +839,16 @@ function BottomTabs({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (tab
   );
 }
 
-const styles = StyleSheet.create({
+function useStyles() {
+  const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  return useMemo(() => createStyles(colors, insets), [colors, insets]);
+}
+
+const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number }) => StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   appShell: { flex: 1, backgroundColor: colors.background },
-  welcome: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.md },
+  welcome: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, paddingTop: insets.top + spacing.xl, gap: spacing.md },
   brandMark: {
     alignItems: 'center',
     backgroundColor: colors.accent,
@@ -565,7 +868,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
+    paddingBottom: spacing.md,
+    paddingTop: insets.top + spacing.md,
   },
   headerTitle: { color: colors.accentDark, fontSize: 28, fontWeight: '800' },
   headerSubtitle: { color: colors.textMuted, fontSize: typography.sm, marginTop: 2 },
@@ -659,14 +963,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
     paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
+    paddingBottom: spacing.sm,
+    paddingTop: insets.top + spacing.sm,
   },
   iconButton: { alignItems: 'center', borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
   iconButtonText: { color: colors.accent, fontSize: 32, fontWeight: '700' },
   conversationTitle: { flex: 1 },
   headerAction: { alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
   headerActionText: { color: colors.accent, fontSize: typography.sm, fontWeight: '800' },
-  messages: { flexGrow: 1, gap: spacing.sm, padding: spacing.md },
+  messages: { flexGrow: 1, gap: spacing.sm, padding: spacing.md, paddingBottom: spacing.xl },
   dateDivider: {
     alignSelf: 'center',
     backgroundColor: colors.accentSoft,
@@ -690,7 +995,9 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     flexDirection: 'row',
     gap: spacing.sm,
-    padding: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingBottom: insets.bottom + spacing.sm,
+    paddingTop: spacing.sm,
   },
   attachButton: { alignItems: 'center', borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
   attachText: { color: colors.textMuted, fontSize: 28 },
@@ -709,7 +1016,7 @@ const styles = StyleSheet.create({
   },
   sendButton: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
   sendButtonText: { color: colors.surface, fontSize: 22, fontWeight: '800' },
-  callScreen: {
+  audioCallScreen: {
     alignItems: 'center',
     backgroundColor: colors.callBackground,
     flex: 1,
@@ -722,43 +1029,76 @@ const styles = StyleSheet.create({
   callAvatarText: { color: colors.surface, fontSize: 38, fontWeight: '900' },
   callName: { color: colors.surface, fontSize: 30, fontWeight: '800', textAlign: 'center' },
   callQuality: { color: colors.callMuted, fontSize: typography.md, textAlign: 'center' },
-  callSteps: { alignSelf: 'stretch', backgroundColor: colors.callPanel, borderRadius: radius.md, gap: spacing.sm, padding: spacing.md },
-  callStepRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
-  callDot: { backgroundColor: colors.success, borderRadius: radius.full, height: 9, width: 9 },
-  callStepText: { color: colors.surface, flex: 1, fontSize: typography.sm },
-  videoMock: {
-    alignItems: 'center',
-    alignSelf: 'stretch',
-    backgroundColor: colors.videoSurface,
-    borderColor: colors.callPanel,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    justifyContent: 'center',
-    minHeight: 150,
+  videoCallScreen: {
+    backgroundColor: colors.callBackground,
+    flex: 1,
   },
-  videoText: { color: colors.surface, fontSize: typography.md, fontWeight: '700' },
-  callControls: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'center' },
-  toggleButton: {
+  mockVideoSurface: {
     alignItems: 'center',
-    backgroundColor: colors.callPanel,
-    borderRadius: radius.full,
+    flex: 1,
     justifyContent: 'center',
-    minHeight: 44,
+    overflow: 'hidden',
+  },
+  mockVideoGlow: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255,255,255,0.10)',
+    transform: [{ rotate: '-18deg' }, { scale: 1.4 }],
+  },
+  mockVideoText: { color: colors.surface, fontSize: 34, fontWeight: '900', textAlign: 'center' },
+  mockVideoMeta: { color: colors.surface, fontSize: typography.sm, fontWeight: '800', marginTop: spacing.sm, opacity: 0.74 },
+  mockVideoCompactText: { color: colors.surface, fontSize: typography.md, fontWeight: '900', textAlign: 'center' },
+  mockVideoCompactMeta: { color: colors.surface, fontSize: 10, fontWeight: '800', marginTop: 2, opacity: 0.74 },
+  videoOffSurface: {
+    alignItems: 'center',
+    backgroundColor: colors.videoSurface,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  videoTopOverlay: {
+    left: spacing.lg,
+    position: 'absolute',
+    right: spacing.lg,
+    top: insets.top + spacing.md,
+  },
+  videoCallName: { color: colors.surface, fontSize: 26, fontWeight: '900', textAlign: 'center' },
+  videoCallStatus: { color: colors.surface, fontSize: typography.md, fontWeight: '800', marginTop: 4, opacity: 0.85, textAlign: 'center' },
+  pipVideo: {
+    borderColor: 'rgba(255,255,255,0.86)',
+    borderRadius: radius.md,
+    borderWidth: 2,
+    height: 148,
+    overflow: 'hidden',
+    position: 'absolute',
+    width: 116,
+  },
+  floatingControls: {
+    bottom: insets.bottom + spacing.lg,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+  },
+  callControls: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
   },
-  toggleButtonActive: { backgroundColor: colors.surface },
-  toggleButtonText: { color: colors.surface, fontSize: typography.sm, fontWeight: '800' },
-  toggleButtonTextActive: { color: colors.callBackground },
-  endCallButton: {
+  callIconButton: {
     alignItems: 'center',
-    backgroundColor: colors.danger,
+    backgroundColor: 'rgba(16,35,28,0.72)',
     borderRadius: radius.full,
+    height: 56,
     justifyContent: 'center',
-    minHeight: 52,
-    minWidth: 156,
-    paddingHorizontal: spacing.lg,
+    minHeight: 48,
+    minWidth: 48,
+    width: 56,
   },
-  endCallText: { color: colors.surface, fontSize: typography.md, fontWeight: '900' },
+  callIconButtonOff: { backgroundColor: '#ffffff' },
+  callIconButtonDanger: {
+    backgroundColor: colors.danger,
+  },
   familyRow: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   profilePanel: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   segmented: { backgroundColor: colors.background, borderRadius: radius.md, flexDirection: 'row', padding: 4 },
@@ -774,7 +1114,7 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     flexDirection: 'row',
     minHeight: 64,
-    paddingBottom: 4,
+    paddingBottom: insets.bottom + 4,
   },
   tabButton: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: 56 },
   tabText: { color: colors.textMuted, fontSize: typography.sm, fontWeight: '800' },
