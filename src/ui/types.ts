@@ -19,10 +19,28 @@ export type Chat = {
 export type Message = {
   id: string;
   chatId: string;
-  sender: 'me' | 'relative';
+  sender: 'me' | 'relative' | 'event';
   text: string;
   createdAt: string;
   delivered: boolean;
+  kind?: 'text' | 'call';
+  callStatus?: 'completed' | 'missed';
+  read?: boolean;
+};
+
+export type CallLogDirection = 'incoming' | 'outgoing' | 'missed';
+
+export type CallLogCallbackType = 'audio' | 'video';
+
+export type CallLogEntry = {
+  id: string;
+  chatId: string;
+  name: string;
+  initials: string;
+  avatarColor: string;
+  direction: CallLogDirection;
+  occurredAt: string;
+  callbackType: CallLogCallbackType;
 };
 
 export type TrafficMode = {

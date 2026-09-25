@@ -1,17 +1,40 @@
-import { Chat, Message, TabKey } from './types';
+import { CallLogCallbackType, CallLogEntry, Chat, Message, TabKey } from './types';
 
 const normalize = (value: string) => value.trim().toLocaleLowerCase('ru-RU');
 
-export function searchChats(chats: Chat[], query: string): Chat[] {
+export type ComposerAction = 'mic' | 'send';
+export type ReceiptState = 'none' | 'sent' | 'delivered' | 'read';
+export type MessagePresentation = {
+  incomingTail: boolean;
+  isCallEvent: boolean;
+  isMissedCall: boolean;
+  receipt: ReceiptState;
+};
+export type CallLogDisplayModel =
+  | { empty: true; emptyText: 'Здесь появятся ваши звонки'; rows: [] }
+  | { empty: false; emptyText: null; rows: CallLogEntry[] };
+export type ChatSelectionModel = {
+  active: boolean;
+  selectedIds: string[];
+};
+export type ChatSearchModel = {
+  active: boolean;
+  query: string;
+};
+
+export function searchChats(chats: Chat[], query: string, messagesByChat: Record<string, Message[]> = {}): Chat[] {
   const needle = normalize(query);
   if (!needle) {
     return chats;
   }
-  return chats.filter(chat => normalize(`${chat.name} ${chat.lastMessage}`).includes(needle));
+  return chats.filter(chat => {
+    const messageText = (messagesByChat[chat.id] ?? []).map(message => message.text).join(' ');
+    return normalize(`${chat.name} ${chat.lastMessage} ${messageText}`).includes(needle);
+  });
 }
 
-export function getOrderedChats(chats: Chat[], query = ''): Chat[] {
-  return [...searchChats(chats, query)].sort((first, second) => {
+export function getOrderedChats(chats: Chat[], query = '', messagesByChat: Record<string, Message[]> = {}): Chat[] {
+  return [...searchChats(chats, query, messagesByChat)].sort((first, second) => {
     if (first.pinned !== second.pinned) {
       return first.pinned ? -1 : 1;
     }
@@ -21,6 +44,42 @@ export function getOrderedChats(chats: Chat[], query = ''): Chat[] {
 
 export function togglePinnedChat(chats: Chat[], chatId: string): Chat[] {
   return chats.map(chat => (chat.id === chatId ? { ...chat, pinned: !chat.pinned } : chat));
+}
+
+export function startChatSelection(chatId: string): ChatSelectionModel {
+  return { active: true, selectedIds: [chatId] };
+}
+
+export function toggleChatSelection(selectedIds: string[], chatId: string): ChatSelectionModel {
+  const selected = selectedIds.includes(chatId);
+  const nextSelectedIds = selected ? selectedIds.filter(id => id !== chatId) : [...selectedIds, chatId];
+  return { active: nextSelectedIds.length > 0, selectedIds: nextSelectedIds };
+}
+
+export function clearChatSelection(): ChatSelectionModel {
+  return { active: false, selectedIds: [] };
+}
+
+export const startFamilySelection = startChatSelection;
+
+export const toggleFamilySelection = toggleChatSelection;
+
+export const clearFamilySelection = clearChatSelection;
+
+export function openChatSearch(current: ChatSearchModel): ChatSearchModel {
+  return current.active ? current : { active: true, query: current.query };
+}
+
+export function updateChatSearchQuery(current: ChatSearchModel, query: string): ChatSearchModel {
+  return { active: current.active, query };
+}
+
+export function clearChatSearchQuery(current: ChatSearchModel): ChatSearchModel {
+  return { active: current.active, query: '' };
+}
+
+export function closeChatSearch(): ChatSearchModel {
+  return { active: false, query: '' };
 }
 
 export function appendOutgoingMessage(
@@ -40,12 +99,55 @@ export function appendOutgoingMessage(
     text,
     createdAt: now.toISOString(),
     delivered: true,
+    kind: 'text',
   };
   return { added: true, message, messages: [...messages, message] };
 }
 
+export function getComposerState(draft: string): { action: ComposerAction; showCamera: boolean; trimmedText: string } {
+  const trimmedText = draft.trim();
+  const isEmpty = trimmedText.length === 0;
+  return {
+    action: isEmpty ? 'mic' : 'send',
+    showCamera: isEmpty,
+    trimmedText,
+  };
+}
+
+export function getMessagePresentation(messages: Message[], message: Message): MessagePresentation {
+  const index = messages.findIndex(item => item.id === message.id);
+  const previous = index > 0 ? messages[index - 1] : undefined;
+  const isCallEvent = message.kind === 'call';
+  const receipt: ReceiptState =
+    message.sender !== 'me' || isCallEvent ? 'none' : message.read ? 'read' : message.delivered ? 'delivered' : 'sent';
+  return {
+    incomingTail: message.sender === 'relative' && previous?.sender !== 'relative',
+    isCallEvent,
+    isMissedCall: isCallEvent && message.callStatus === 'missed',
+    receipt,
+  };
+}
+
 export function selectTab(_current: TabKey, next: TabKey): TabKey {
   return next;
+}
+
+export function getCallLogDisplayModel(entries: CallLogEntry[]): CallLogDisplayModel {
+  return entries.length === 0
+    ? { empty: true, emptyText: 'Здесь появятся ваши звонки', rows: [] }
+    : { empty: false, emptyText: null, rows: entries };
+}
+
+export function getCallbackCallMode(callbackType: CallLogCallbackType): 'audio' | 'video' {
+  return callbackType === 'video' ? 'video' : 'audio';
+}
+
+export function getTotalUnreadCount(chats: Chat[]): number {
+  return chats.reduce((total, chat) => total + chat.unread, 0);
+}
+
+export function getMissedCallCount(entries: CallLogEntry[]): number {
+  return entries.filter(entry => entry.direction === 'missed').length;
 }
 
 export function formatMessageTime(value: string): string {

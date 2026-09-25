@@ -15,6 +15,11 @@
     "android": {
       "package": "net.hearth.canary",
       "versionCode": 2,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/brand/che-tam-brand-mark.png",
+        "backgroundColor": "#0F5C48",
+        "monochromeImage": "./assets/brand/che-tam-notification-icon.png"
+      },
       "permissions": [
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
@@ -23,6 +28,10 @@
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
       ]
+    },
+    "notification": {
+      "icon": "./assets/brand/che-tam-notification-icon.png",
+      "color": "#0F5C48"
     },
     "extra": {
       "canaryEndpoint": "${EXPO_PUBLIC_CANARY_ENDPOINT}",

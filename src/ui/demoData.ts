@@ -1,4 +1,4 @@
-import { Chat, Message, ThemeOption, TrafficMode } from './types';
+import { CallLogEntry, Chat, Message, ThemeOption, TrafficMode } from './types';
 
 export const INITIAL_CHATS: Chat[] = [
   {
@@ -86,6 +86,27 @@ export const INITIAL_MESSAGES: Record<string, Message[]> = {
       text: 'Да, вечером покажем новый рисунок по видеозвонку.',
       createdAt: '2026-09-22T08:17:00.000Z',
       delivered: true,
+      read: true,
+    },
+    {
+      id: 'parents-call-1',
+      chatId: 'parents',
+      sender: 'event',
+      text: 'Голосовой звонок · 1 мин',
+      createdAt: '2026-09-22T08:44:00.000Z',
+      delivered: true,
+      kind: 'call',
+      callStatus: 'completed',
+    },
+    {
+      id: 'parents-call-2',
+      chatId: 'parents',
+      sender: 'event',
+      text: 'Пропущенный звонок — нажмите, чтобы перезвонить',
+      createdAt: '2026-09-22T08:52:00.000Z',
+      delivered: true,
+      kind: 'call',
+      callStatus: 'missed',
     },
     {
       id: 'parents-3',
@@ -94,6 +115,23 @@ export const INITIAL_MESSAGES: Record<string, Message[]> = {
       text: 'Созвонимся после ужина, если связь будет ровная.',
       createdAt: '2026-09-22T09:10:00.000Z',
       delivered: true,
+    },
+    {
+      id: 'parents-4',
+      chatId: 'parents',
+      sender: 'me',
+      text: 'Проверяю связь перед ужином.',
+      createdAt: '2026-09-22T09:12:00.000Z',
+      delivered: false,
+    },
+    {
+      id: 'parents-5',
+      chatId: 'parents',
+      sender: 'me',
+      text: 'Сообщение доставлено, ждём ответа.',
+      createdAt: '2026-09-22T09:13:00.000Z',
+      delivered: true,
+      read: false,
     },
   ],
   sister: [
@@ -154,6 +192,49 @@ export const FAMILY_MEMBERS = [
   { name: 'Лейла', initials: 'Л', role: 'Стамбул · помогает с расписанием', color: '#7c4f2c' },
   { name: 'Руслан', initials: 'Р', role: 'Домашний узел · демо-статус', color: '#2f668f' },
   { name: 'Бабушка Нина', initials: 'БН', role: 'Любит короткие видеосообщения', color: '#8a4f7d' },
+];
+
+export const INITIAL_CALL_LOG: CallLogEntry[] = [
+  {
+    id: 'call-parents-today',
+    chatId: 'parents',
+    name: 'Мама и папа',
+    initials: 'МП',
+    avatarColor: '#116149',
+    direction: 'missed',
+    occurredAt: '2026-09-22T12:14:00.000Z',
+    callbackType: 'video',
+  },
+  {
+    id: 'call-sister-today',
+    chatId: 'sister',
+    name: 'Лейла',
+    initials: 'Л',
+    avatarColor: '#7c4f2c',
+    direction: 'outgoing',
+    occurredAt: '2026-09-22T10:05:00.000Z',
+    callbackType: 'audio',
+  },
+  {
+    id: 'call-brother-yesterday',
+    chatId: 'brother',
+    name: 'Руслан',
+    initials: 'Р',
+    avatarColor: '#2f668f',
+    direction: 'incoming',
+    occurredAt: '2026-09-21T18:40:00.000Z',
+    callbackType: 'video',
+  },
+  {
+    id: 'call-grandma-yesterday',
+    chatId: 'grandma',
+    name: 'Бабушка Нина',
+    initials: 'БН',
+    avatarColor: '#8a4f7d',
+    direction: 'incoming',
+    occurredAt: '2026-09-21T16:22:00.000Z',
+    callbackType: 'audio',
+  },
 ];
 
 export const TRAFFIC_MODES: TrafficMode[] = [

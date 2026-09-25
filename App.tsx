@@ -1,11 +1,46 @@
 import { StatusBar } from 'expo-status-bar';
-import { Ear, Mic, MicOff, PhoneOff, SwitchCamera, Video, VideoOff, Volume2 } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  Archive,
+  BellOff,
+  Camera,
+  Check,
+  CheckCheck,
+  Ear,
+  EllipsisVertical,
+  Mic,
+  MicOff,
+  MessageCircle,
+  Paperclip,
+  Phone,
+  PhoneIncoming,
+  PhoneMissed,
+  PhoneOff,
+  PhoneOutgoing,
+  Pin,
+  Search,
+  SendHorizontal,
+  Settings,
+  Smile,
+  Trash2,
+  SwitchCamera,
+  Users,
+  Video,
+  VideoOff,
+  Volume2,
+  X,
+} from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { KeyboardAvoidingView, KeyboardChatScrollView, KeyboardProvider } from 'react-native-keyboard-controller';
+import type { ImageStyle, LayoutChangeEvent, StyleProp } from 'react-native';
+import { KeyboardAvoidingView, KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BackHandler,
+  Animated,
+  FlatList,
+  Image,
+  Keyboard,
   PanResponder,
   Platform,
   Pressable,
@@ -20,6 +55,7 @@ import {
 
 import {
   FAMILY_MEMBERS,
+  INITIAL_CALL_LOG,
   INITIAL_CHATS,
   INITIAL_MESSAGES,
   THEME_OPTIONS,
@@ -27,19 +63,44 @@ import {
 } from './src/ui/demoData';
 import {
   appendOutgoingMessage,
+  clearChatSearchQuery,
+  clearChatSelection,
+  clearFamilySelection,
+  closeChatSearch,
   formatMessageTime,
+  getCallLogDisplayModel,
+  getCallbackCallMode,
   getChatPreview,
+  getMissedCallCount,
+  getComposerState,
+  getMessagePresentation,
   getOrderedChats,
+  getTotalUnreadCount,
+  openChatSearch,
   selectTab,
-  togglePinnedChat,
+  startChatSelection,
+  startFamilySelection,
+  toggleChatSelection,
+  toggleFamilySelection,
+  updateChatSearchQuery,
 } from './src/ui/state';
 import { ThemeProvider, useTheme } from './src/ui/theme';
 import { radius, spacing, typography, type ThemeColors } from './src/ui/tokens';
-import { Chat, Message, TabKey, TrafficModeKey } from './src/ui/types';
+import { CallLogEntry, Chat, Message, TabKey, TrafficModeKey } from './src/ui/types';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
 type AudioRoute = 'speaker' | 'earpiece';
+type LocalAvatar = { initials: string };
+
+// React Native resolves bundled image assets through static require calls.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const BRAND_MARK = require('./assets/brand/che-tam-brand-mark.png') as number;
+const SELF_AVATAR: LocalAvatar = { initials: 'АМ' };
+const PIP_WIDTH = 116;
+const PIP_HEIGHT = 148;
+const PIP_CONTROLS_GAP = spacing.lg;
+const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
 
 export default function App() {
   return (
@@ -59,7 +120,7 @@ function ThemedApp() {
   const [selectedChatId, setSelectedChatId] = useState(INITIAL_CHATS[0].id);
   const [chats, setChats] = useState(INITIAL_CHATS);
   const [messagesByChat, setMessagesByChat] = useState(INITIAL_MESSAGES);
-  const [query, setQuery] = useState('');
+  const [chatSearch, setChatSearch] = useState({ active: false, query: '' });
   const [composer, setComposer] = useState('');
   const [trafficMode, setTrafficMode] = useState<TrafficModeKey>('economy');
   const [expandedWelcome, setExpandedWelcome] = useState(false);
@@ -67,16 +128,32 @@ function ThemedApp() {
   const [muted, setMuted] = useState(false);
   const [cameraOff, setCameraOff] = useState(false);
   const [audioRoute, setAudioRoute] = useState<AudioRoute>('speaker');
-  const [cameraFacing, setCameraFacing] = useState<'front' | 'back'>('front');
+  const [, setCameraFacing] = useState<'front' | 'back'>('front');
   const [connectionHints, setConnectionHints] = useState(true);
+  const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
+  const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([]);
 
   const { mode } = useTheme();
   const styles = useStyles();
-  const orderedChats = useMemo(() => getOrderedChats(chats, query), [chats, query]);
+  const orderedChats = useMemo(() => getOrderedChats(chats, chatSearch.query, messagesByChat), [chats, chatSearch.query, messagesByChat]);
   const selectedChat = chats.find(chat => chat.id === selectedChatId) ?? chats[0];
   const selectedMessages = messagesByChat[selectedChat.id] ?? [];
+  const callLog = INITIAL_CALL_LOG;
 
   const goBack = () => {
+    if (selectedChatIds.length > 0) {
+      setSelectedChatIds(clearChatSelection().selectedIds);
+      return true;
+    }
+    if (selectedFamilyIds.length > 0) {
+      setSelectedFamilyIds(clearFamilySelection().selectedIds);
+      return true;
+    }
+    if (screen === 'home' && activeTab === 'chats' && chatSearch.active) {
+      Keyboard.dismiss();
+      setChatSearch(closeChatSearch());
+      return true;
+    }
     if (screen === 'call') {
       setScreen('conversation');
       return true;
@@ -95,7 +172,7 @@ function ThemedApp() {
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
     return () => subscription.remove();
-  }, [screen, activeTab]);
+  }, [screen, activeTab, selectedChatIds.length, selectedFamilyIds.length, chatSearch.active]);
 
   const enterDemo = () => {
     setActiveTab('chats');
@@ -105,6 +182,64 @@ function ThemedApp() {
   const openChat = (chatId: string) => {
     setSelectedChatId(chatId);
     setScreen('conversation');
+  };
+
+  const startSelectingChat = (chatId: string) => {
+    setSelectedChatIds(startChatSelection(chatId).selectedIds);
+  };
+
+  const toggleSelectedChat = (chatId: string) => {
+    setSelectedChatIds(current => toggleChatSelection(current, chatId).selectedIds);
+  };
+
+  const cancelChatSelection = () => {
+    setSelectedChatIds(clearChatSelection().selectedIds);
+  };
+
+  const startSelectingFamilyMember = (memberId: string) => {
+    setSelectedFamilyIds(startFamilySelection(memberId).selectedIds);
+  };
+
+  const toggleSelectedFamilyMember = (memberId: string) => {
+    setSelectedFamilyIds(current => toggleFamilySelection(current, memberId).selectedIds);
+  };
+
+  const cancelFamilySelection = () => {
+    setSelectedFamilyIds(clearFamilySelection().selectedIds);
+  };
+
+  const startChatSearch = () => {
+    if (selectedChatIds.length > 0) {
+      return;
+    }
+    setChatSearch(current => openChatSearch(current));
+  };
+
+  const updateChatSearch = (value: string) => {
+    setChatSearch(current => updateChatSearchQuery(current, value));
+  };
+
+  const clearChatSearch = () => {
+    setChatSearch(current => clearChatSearchQuery(current));
+  };
+
+  const cancelChatSearch = () => {
+    Keyboard.dismiss();
+    setChatSearch(closeChatSearch());
+  };
+
+  const selectHomeTab = (tab: TabKey) => {
+    if (tab !== 'chats' && chatSearch.active) {
+      Keyboard.dismiss();
+      setChatSearch(closeChatSearch());
+    }
+    if (tab !== 'chats' && selectedChatIds.length > 0) {
+      setSelectedChatIds(clearChatSelection().selectedIds);
+    }
+    if (tab !== 'family' && selectedFamilyIds.length > 0) {
+      setSelectedFamilyIds(clearFamilySelection().selectedIds);
+    }
+    setActiveTab(current => selectTab(current, tab));
   };
 
   const sendMessage = () => {
@@ -130,6 +265,17 @@ function ThemedApp() {
     setScreen('call');
   };
 
+  const startCallFromLog = (entry: CallLogEntry) => {
+    setSelectedChatId(entry.chatId);
+    startCall(getCallbackCallMode(entry.callbackType));
+  };
+
+  const startFamilyCall = (memberName: string, mode: CallMode) => {
+    const familyChat = chats.find(chat => chat.name === memberName);
+    setSelectedChatId(familyChat?.id ?? chats[0].id);
+    startCall(mode);
+  };
+
   return (
     <View style={styles.safeArea}>
       <StatusBar style={mode === 'dark' ? 'light' : 'dark'} />
@@ -140,15 +286,29 @@ function ThemedApp() {
         <HomeScreen
           activeTab={activeTab}
           chats={orderedChats}
+          callLog={callLog}
           connectionHints={connectionHints}
-          query={query}
+          query={chatSearch.query}
+          searchActive={chatSearch.active}
+          selectedChatIds={selectedChatIds}
+          selectedFamilyIds={selectedFamilyIds}
           trafficMode={trafficMode}
+          onCancelChatSelection={cancelChatSelection}
+          onCancelFamilySelection={cancelFamilySelection}
+          onCancelSearch={cancelChatSearch}
+          onClearSearch={clearChatSearch}
           onOpenChat={openChat}
-          onQuery={setQuery}
-          onSelectTab={tab => setActiveTab(current => selectTab(current, tab))}
+          onOpenSearch={startChatSearch}
+          onQuery={updateChatSearch}
+          onSelectTab={selectHomeTab}
           onSetConnectionHints={setConnectionHints}
           onSetTrafficMode={setTrafficMode}
-          onTogglePinned={chatId => setChats(current => togglePinnedChat(current, chatId))}
+          onStartSelectingChat={startSelectingChat}
+          onStartSelectingFamilyMember={startSelectingFamilyMember}
+          onStartCallFromLog={startCallFromLog}
+          onStartFamilyCall={startFamilyCall}
+          onToggleSelectedChat={toggleSelectedChat}
+          onToggleSelectedFamilyMember={toggleSelectedFamilyMember}
         />
       ) : null}
       {screen === 'conversation' ? (
@@ -165,10 +325,10 @@ function ThemedApp() {
       {screen === 'call' ? (
         <CallScreen
           cameraOff={cameraOff}
-          cameraFacing={cameraFacing}
           chat={selectedChat}
           mode={callMode}
           muted={muted}
+          selfAvatar={SELF_AVATAR}
           audioRoute={audioRoute}
           onEnd={() => setScreen('conversation')}
           onToggleCamera={() => setCameraOff(value => !value)}
@@ -193,9 +353,7 @@ function WelcomeScreen({
   const styles = useStyles();
   return (
     <ScrollView contentContainerStyle={styles.welcome}>
-      <View style={styles.brandMark}>
-        <Text style={styles.brandMarkText}>Ч</Text>
-      </View>
+      <BrandMark style={styles.brandMarkHero} />
       <Text style={styles.heroTitle}>Чё-Там</Text>
       <Text style={styles.heroText}>Тёплое место для семейных разговоров, сообщений и звонков на слабой связи.</Text>
       <Pressable accessibilityRole="button" onPress={onDemo} style={styles.primaryButton}>
@@ -220,38 +378,96 @@ function WelcomeScreen({
 function HomeScreen({
   activeTab,
   chats,
+  callLog,
   connectionHints,
   query,
+  searchActive,
+  selectedChatIds,
+  selectedFamilyIds,
   trafficMode,
+  onCancelChatSelection,
+  onCancelFamilySelection,
+  onCancelSearch,
+  onClearSearch,
   onOpenChat,
+  onOpenSearch,
   onQuery,
   onSelectTab,
   onSetConnectionHints,
   onSetTrafficMode,
-  onTogglePinned,
+  onStartSelectingChat,
+  onStartSelectingFamilyMember,
+  onStartCallFromLog,
+  onStartFamilyCall,
+  onToggleSelectedChat,
+  onToggleSelectedFamilyMember,
 }: {
   activeTab: TabKey;
   chats: Chat[];
+  callLog: CallLogEntry[];
   connectionHints: boolean;
   query: string;
+  searchActive: boolean;
+  selectedChatIds: string[];
+  selectedFamilyIds: string[];
   trafficMode: TrafficModeKey;
+  onCancelChatSelection: () => void;
+  onCancelFamilySelection: () => void;
+  onCancelSearch: () => void;
+  onClearSearch: () => void;
   onOpenChat: (chatId: string) => void;
+  onOpenSearch: () => void;
   onQuery: (value: string) => void;
   onSelectTab: (tab: TabKey) => void;
   onSetConnectionHints: (value: boolean) => void;
   onSetTrafficMode: (value: TrafficModeKey) => void;
-  onTogglePinned: (chatId: string) => void;
+  onStartSelectingChat: (chatId: string) => void;
+  onStartSelectingFamilyMember: (memberId: string) => void;
+  onStartCallFromLog: (entry: CallLogEntry) => void;
+  onStartFamilyCall: (memberName: string, mode: CallMode) => void;
+  onToggleSelectedChat: (chatId: string) => void;
+  onToggleSelectedFamilyMember: (memberId: string) => void;
 }) {
   const styles = useStyles();
+  const chatSelectionMode = activeTab === 'chats' && selectedChatIds.length > 0;
+  const familySelectionMode = activeTab === 'family' && selectedFamilyIds.length > 0;
   return (
     <View style={styles.appShell}>
-      <Header subtitle={activeTab === 'chats' ? 'Семейные разговоры' : undefined} />
-      <ScrollView contentContainerStyle={styles.content}>
+      {chatSelectionMode ? (
+        <SelectionHeader count={selectedChatIds.length} onCancel={onCancelChatSelection} />
+      ) : familySelectionMode ? (
+        <SelectionHeader count={selectedFamilyIds.length} onCancel={onCancelFamilySelection} />
+      ) : activeTab === 'chats' ? (
+        <ChatsHeader
+          query={query}
+          searchActive={searchActive}
+          onCancelSearch={onCancelSearch}
+          onClearSearch={onClearSearch}
+          onOpenSearch={onOpenSearch}
+          onQuery={onQuery}
+        />
+      ) : (
+        <TopLevelHeader subtitle={getTabSubtitle(activeTab)} onSearch={() => undefined} />
+      )}
+      <ScrollView contentContainerStyle={[styles.content, activeTab !== 'settings' && styles.topLevelListContent]}>
         {activeTab === 'chats' ? (
-          <ChatList chats={chats} query={query} onOpenChat={onOpenChat} onQuery={onQuery} onTogglePinned={onTogglePinned} />
+          <ChatList
+            chats={chats}
+            selectedChatIds={selectedChatIds}
+            onOpenChat={onOpenChat}
+            onStartSelectingChat={onStartSelectingChat}
+            onToggleSelectedChat={onToggleSelectedChat}
+          />
         ) : null}
-        {activeTab === 'calls' ? <CallsTab /> : null}
-        {activeTab === 'family' ? <FamilyTab /> : null}
+        {activeTab === 'calls' ? <CallsTab callLog={callLog} onStartCall={onStartCallFromLog} /> : null}
+        {activeTab === 'family' ? (
+          <FamilyTab
+            selectedFamilyIds={selectedFamilyIds}
+            onStartCall={onStartFamilyCall}
+            onStartSelectingFamilyMember={onStartSelectingFamilyMember}
+            onToggleSelectedFamilyMember={onToggleSelectedFamilyMember}
+          />
+        ) : null}
         {activeTab === 'settings' ? (
           <SettingsTab
             connectionHints={connectionHints}
@@ -261,21 +477,148 @@ function HomeScreen({
           />
         ) : null}
       </ScrollView>
-      <BottomTabs activeTab={activeTab} onSelect={onSelectTab} />
+      <BottomTabs activeTab={activeTab} chats={chats} callLog={callLog} onSelect={onSelectTab} />
     </View>
   );
 }
 
-function Header({ subtitle }: { subtitle?: string }) {
+function getTabSubtitle(tab: TabKey): string {
+  if (tab === 'calls') {
+    return 'Звонки';
+  }
+  if (tab === 'family') {
+    return 'Семья';
+  }
+  return 'Настройки';
+}
+
+function TopLevelHeader({ subtitle, onSearch }: { subtitle: string; onSearch: () => void }) {
+  const { colors } = useTheme();
   const styles = useStyles();
   return (
-    <View style={styles.header}>
-      <View>
-        <Text style={styles.headerTitle}>Чё-Там</Text>
-        {subtitle ? <Text style={styles.headerSubtitle}>{subtitle}</Text> : null}
+    <View style={styles.topHeader}>
+      <View style={styles.topHeaderBrand}>
+        <BrandMark style={styles.brandMarkHeader} />
+        <View style={styles.topHeaderText}>
+          <Text style={styles.topHeaderTitle}>Чё-Там</Text>
+          <Text style={styles.topHeaderSubtitle}>{subtitle}</Text>
+        </View>
       </View>
-      <View style={styles.statusPill}>
-        <Text style={styles.statusPillText}>offline demo</Text>
+      <HeaderIconButton accessibilityLabel="Поиск" icon={<Search color={colors.accent} size={24} />} onPress={onSearch} />
+    </View>
+  );
+}
+
+function ChatsHeader({
+  query,
+  searchActive,
+  onCancelSearch,
+  onClearSearch,
+  onOpenSearch,
+  onQuery,
+}: {
+  query: string;
+  searchActive: boolean;
+  onCancelSearch: () => void;
+  onClearSearch: () => void;
+  onOpenSearch: () => void;
+  onQuery: (value: string) => void;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const progress = useRef(new Animated.Value(searchActive ? 1 : 0)).current;
+  const inputRef = useRef<TextInput>(null);
+
+  useEffect(() => {
+    Animated.timing(progress, {
+      duration: 180,
+      toValue: searchActive ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+    if (searchActive) {
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [progress, searchActive]);
+
+  const normalOpacity = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const searchOpacity = progress.interpolate({ inputRange: [0, 1], outputRange: [0, 1] });
+  const normalTranslate = progress.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
+  const searchTranslate = progress.interpolate({ inputRange: [0, 1], outputRange: [8, 0] });
+
+  return (
+    <View style={styles.chatsHeader}>
+      <Animated.View
+        pointerEvents={searchActive ? 'none' : 'auto'}
+        style={[styles.headerLayer, { opacity: normalOpacity, transform: [{ translateY: normalTranslate }] }]}
+      >
+        <View style={styles.topHeaderBrand}>
+          <BrandMark style={styles.brandMarkHeader} />
+          <View style={styles.topHeaderText}>
+            <Text style={styles.topHeaderTitle}>Чё-Там</Text>
+            <Text style={styles.topHeaderSubtitle}>Семейные разговоры</Text>
+          </View>
+        </View>
+        <HeaderIconButton accessibilityLabel="Открыть поиск" icon={<Search color={colors.accent} size={24} />} onPress={onOpenSearch} />
+      </Animated.View>
+      <Animated.View
+        pointerEvents={searchActive ? 'auto' : 'none'}
+        style={[styles.headerLayer, { opacity: searchOpacity, transform: [{ translateY: searchTranslate }] }]}
+      >
+        <HeaderIconButton accessibilityLabel="Закрыть поиск" icon={<ArrowLeft color={colors.accent} size={24} />} onPress={onCancelSearch} />
+        <TextInput
+          accessibilityLabel="Поиск по семье и сообщениям"
+          autoFocus={searchActive}
+          onChangeText={onQuery}
+          placeholder="Поиск по семье и сообщениям"
+          placeholderTextColor={colors.textMuted}
+          ref={inputRef}
+          returnKeyType="search"
+          style={styles.headerSearchInput}
+          value={query}
+        />
+        <HeaderIconButton accessibilityLabel="Очистить поиск" icon={<X color={colors.accent} size={24} />} onPress={onClearSearch} />
+      </Animated.View>
+    </View>
+  );
+}
+
+function SelectionHeader({ count, onCancel }: { count: number; onCancel: () => void }) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const actions: { label: string; icon: ReactNode }[] = [
+    { label: 'Закрепить выбранные', icon: <Pin color={colors.accent} size={22} /> },
+    { label: 'Удалить выбранные', icon: <Trash2 color={colors.accent} size={22} /> },
+    { label: 'Без уведомлений', icon: <BellOff color={colors.accent} size={22} /> },
+    { label: 'Архивировать выбранные', icon: <Archive color={colors.accent} size={22} /> },
+    { label: 'Ещё', icon: <EllipsisVertical color={colors.accent} size={22} /> },
+  ];
+  return (
+    <View style={styles.selectionHeader}>
+      <HeaderIconButton accessibilityLabel="Отменить выделение" icon={<ArrowLeft color={colors.accent} size={24} />} onPress={onCancel} />
+      <Text accessibilityLiveRegion="polite" style={styles.selectionCount}>
+        {count}
+      </Text>
+      <View style={styles.selectionActions}>
+        {actions.map(action => (
+          <HeaderIconButton accessibilityLabel={action.label} icon={action.icon} key={action.label} onPress={() => undefined} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function BrandMark({ style }: { style: StyleProp<ImageStyle> }) {
+  return <Image accessibilityIgnoresInvertColors source={BRAND_MARK} style={style} />;
+}
+
+function AboutBrand() {
+  const styles = useStyles();
+  return (
+    <View style={styles.aboutBrand}>
+      <BrandMark style={styles.brandMarkAbout} />
+      <View style={styles.aboutBrandText}>
+        <Text style={styles.infoTitle}>О приложении</Text>
+        <Text style={styles.bodyText}>Чё-Там - семейный мессенджер для сообщений и звонков на слабой связи.</Text>
       </View>
     </View>
   );
@@ -283,29 +626,28 @@ function Header({ subtitle }: { subtitle?: string }) {
 
 function ChatList({
   chats,
-  query,
+  selectedChatIds,
   onOpenChat,
-  onQuery,
-  onTogglePinned,
+  onStartSelectingChat,
+  onToggleSelectedChat,
 }: {
   chats: Chat[];
-  query: string;
+  selectedChatIds: string[];
   onOpenChat: (chatId: string) => void;
-  onQuery: (value: string) => void;
-  onTogglePinned: (chatId: string) => void;
+  onStartSelectingChat: (chatId: string) => void;
+  onToggleSelectedChat: (chatId: string) => void;
 }) {
-  const { colors } = useTheme();
   const styles = useStyles();
+  const selectionMode = selectedChatIds.length > 0;
+  const handlePress = (chatId: string) => {
+    if (selectionMode) {
+      onToggleSelectedChat(chatId);
+      return;
+    }
+    onOpenChat(chatId);
+  };
   return (
-    <View style={styles.stack}>
-      <TextInput
-        accessibilityLabel="Поиск по чатам"
-        onChangeText={onQuery}
-        placeholder="Поиск по семье и сообщениям"
-        placeholderTextColor={colors.textMuted}
-        style={styles.searchInput}
-        value={query}
-      />
+    <View style={styles.chatList}>
       {chats.length === 0 ? (
         <View style={styles.emptyState}>
           <Text style={styles.emptyTitle}>Ничего не найдено</Text>
@@ -313,40 +655,92 @@ function ChatList({
         </View>
       ) : null}
       {chats.map(chat => (
-        <Pressable
-          accessibilityRole="button"
+        <ChatListRow
+          chat={chat}
+          selected={selectedChatIds.includes(chat.id)}
+          selectionMode={selectionMode}
           key={chat.id}
-          onLongPress={() => onTogglePinned(chat.id)}
-          onPress={() => onOpenChat(chat.id)}
-          style={({ pressed }) => [styles.chatRow, pressed && styles.pressed]}
-        >
-          <View style={[styles.avatar, { backgroundColor: chat.avatarColor }]}>
-            <Text style={styles.avatarText}>{chat.initials}</Text>
-          </View>
-          <View style={styles.chatMain}>
-            <View style={styles.rowBetween}>
-              <Text numberOfLines={1} style={styles.chatName}>
-                {chat.pinned ? '★ ' : ''}
-                {chat.name}
-              </Text>
-              <Text style={styles.chatTime}>{chat.time}</Text>
-            </View>
-            <View style={styles.rowBetween}>
-              <Text numberOfLines={1} style={styles.chatPreview}>
-                {getChatPreview(chat)}
-              </Text>
-              {chat.unread > 0 ? (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadText}>{chat.unread}</Text>
-                </View>
-              ) : null}
-            </View>
-            <Text style={styles.trafficLabel}>{chat.trafficLabel}</Text>
-          </View>
-        </Pressable>
+          onLongPress={() => (selectionMode ? handlePress(chat.id) : onStartSelectingChat(chat.id))}
+          onPress={() => handlePress(chat.id)}
+        />
       ))}
-      <Text style={styles.hintText}>Долгое нажатие закрепляет чат наверху списка.</Text>
     </View>
+  );
+}
+
+function ChatListRow({
+  chat,
+  selected,
+  selectionMode,
+  onLongPress,
+  onPress,
+}: {
+  chat: Chat;
+  selected: boolean;
+  selectionMode: boolean;
+  onLongPress: () => void;
+  onPress: () => void;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const selectedProgress = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(selectedProgress, {
+      duration: 130,
+      toValue: selected ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+  }, [selected, selectedProgress]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      android_ripple={{ color: colors.accentSoft, borderless: false }}
+      delayLongPress={220}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={({ pressed }) => [styles.chatRow, pressed && styles.chatRowPressed]}
+    >
+      <Animated.View pointerEvents="none" style={[styles.chatSelectionFill, { opacity: selectedProgress }]} />
+      <View style={styles.chatAvatarWrap}>
+        <View style={[styles.avatar, { backgroundColor: chat.avatarColor }]}>
+          <Text style={styles.avatarText}>{chat.initials}</Text>
+        </View>
+        {selected || selectionMode ? (
+          <Animated.View
+            style={[
+              styles.selectedCheck,
+              {
+                opacity: selectedProgress,
+                transform: [{ scale: selectedProgress.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1] }) }],
+              },
+            ]}
+          >
+            <Check color={colors.surface} size={14} strokeWidth={3} />
+          </Animated.View>
+        ) : null}
+      </View>
+      <View style={styles.chatMain}>
+        <View style={styles.rowBetween}>
+          <Text numberOfLines={1} style={styles.chatName}>
+            {chat.name}
+          </Text>
+          <Text style={styles.chatTime}>{chat.time}</Text>
+        </View>
+        <View style={styles.rowBetween}>
+          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.chatPreview}>
+            {getChatPreview(chat)}
+          </Text>
+          {chat.unread > 0 ? (
+            <View style={styles.unreadBadge}>
+              <Text style={styles.unreadText}>{chat.unread}</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+    </Pressable>
   );
 }
 
@@ -368,14 +762,23 @@ function ConversationScreen({
   onStartCall: (mode: CallMode) => void;
 }) {
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const styles = useStyles();
+  const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  const composerState = getComposerState(composer);
+  const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(actionTransition, {
+      duration: 160,
+      toValue: composerState.action === 'send' ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+  }, [actionTransition, composerState.action]);
+
   return (
     <KeyboardAvoidingView automaticOffset behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.appShell}>
       <View style={styles.conversationHeader}>
-        <Pressable accessibilityRole="button" onPress={onBack} style={styles.iconButton}>
-          <Text style={styles.iconButtonText}>‹</Text>
-        </Pressable>
+        <HeaderIconButton accessibilityLabel="Назад" icon={<ArrowLeft color={colors.accent} size={24} />} onPress={onBack} />
         <View style={[styles.avatarSmall, { backgroundColor: chat.avatarColor }]}>
           <Text style={styles.avatarSmallText}>{chat.initials}</Text>
         </View>
@@ -383,58 +786,156 @@ function ConversationScreen({
           <Text numberOfLines={1} style={styles.chatName}>
             {chat.name}
           </Text>
-          <Text style={styles.headerSubtitle}>локальный демо-чат</Text>
+          <Text numberOfLines={1} style={styles.headerSubtitle}>
+            в сети
+          </Text>
         </View>
-        <Pressable accessibilityRole="button" onPress={() => onStartCall('audio')} style={styles.headerAction}>
-          <Text style={styles.headerActionText}>Аудио</Text>
-        </Pressable>
-        <Pressable accessibilityRole="button" onPress={() => onStartCall('video')} style={styles.headerAction}>
-          <Text style={styles.headerActionText}>Видео</Text>
-        </Pressable>
+        <HeaderIconButton accessibilityLabel="Аудиозвонок" icon={<Phone color={colors.accent} size={22} />} onPress={() => onStartCall('audio')} />
+        <HeaderIconButton accessibilityLabel="Видеозвонок" icon={<Video color={colors.accent} size={22} />} onPress={() => onStartCall('video')} />
+        <HeaderIconButton accessibilityLabel="Меню чата" icon={<EllipsisVertical color={colors.accent} size={22} />} onPress={() => undefined} />
       </View>
-      <KeyboardChatScrollView
-        contentContainerStyle={styles.messages}
-        keyboardLiftBehavior="whenAtEnd"
-        offset={insets.bottom}
-      >
-        <Text style={styles.dateDivider}>Сегодня</Text>
-        {messages.map(message => (
-          <View key={message.id} style={[styles.messageBubble, message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble]}>
-            <Text style={styles.messageText}>{message.text}</Text>
-            <Text style={styles.messageMeta}>
-              {formatMessageTime(message.createdAt)} {message.sender === 'me' ? '✓✓' : ''}
-            </Text>
-          </View>
-        ))}
-      </KeyboardChatScrollView>
-      <View style={styles.composer}>
-        <Pressable accessibilityRole="button" style={styles.attachButton}>
-          <Text style={styles.attachText}>＋</Text>
-        </Pressable>
-        <TextInput
-          accessibilityLabel="Текст сообщения"
-          multiline
-          onChangeText={onComposer}
-          placeholder="Сообщение"
-          placeholderTextColor={colors.textMuted}
-          style={styles.composerInput}
-          value={composer}
+      <View style={styles.messageArea}>
+        <View pointerEvents="none" style={styles.chatPattern}>
+          <View style={[styles.patternDot, styles.patternDotOne]} />
+          <View style={[styles.patternDot, styles.patternDotTwo]} />
+          <View style={[styles.patternRing, styles.patternRingOne]} />
+          <View style={[styles.patternRing, styles.patternRingTwo]} />
+        </View>
+        <FlatList
+          contentContainerStyle={styles.messages}
+          data={reversedMessages}
+          inverted
+          keyboardShouldPersistTaps="handled"
+          keyExtractor={message => message.id}
+          ListFooterComponent={<Text style={styles.dateDivider}>Сегодня</Text>}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} />}
+          style={styles.messageList}
         />
-        <Pressable accessibilityRole="button" onPress={onSend} style={styles.sendButton}>
-          <Text style={styles.sendButtonText}>➤</Text>
+      </View>
+      <View style={styles.composerOverlay}>
+        <View style={styles.composerCapsule}>
+          <ComposerIconButton accessibilityLabel="Смайлы" icon={<Smile color={colors.textMuted} size={22} />} />
+          <TextInput
+            accessibilityLabel="Текст сообщения"
+            multiline
+            onChangeText={onComposer}
+            placeholder="Сообщение"
+            placeholderTextColor={colors.textMuted}
+            scrollEnabled
+            style={styles.composerInput}
+            value={composer}
+          />
+          <ComposerIconButton accessibilityLabel="Вложение" icon={<Paperclip color={colors.textMuted} size={22} />} />
+          {composerState.showCamera ? <ComposerIconButton accessibilityLabel="Камера" icon={<Camera color={colors.textMuted} size={22} />} /> : null}
+        </View>
+        <Pressable
+          accessibilityLabel={composerState.action === 'send' ? 'Отправить сообщение' : 'Голосовое сообщение'}
+          accessibilityRole="button"
+          onPress={composerState.action === 'send' ? onSend : undefined}
+          style={styles.composerAction}
+        >
+          <Animated.View
+            style={[
+              styles.composerActionIcon,
+              {
+                opacity: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
+                transform: [{ scale: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [1, 0.78] }) }],
+              },
+            ]}
+          >
+            <Mic color={colors.surface} size={23} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.composerActionIcon,
+              {
+                opacity: actionTransition,
+                transform: [{ scale: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [0.78, 1] }) }],
+              },
+            ]}
+          >
+            <SendHorizontal color={colors.surface} size={23} />
+          </Animated.View>
         </Pressable>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
+function ComposerIconButton({ accessibilityLabel, icon }: { accessibilityLabel: string; icon: ReactNode }) {
+  const styles = useStyles();
+  return (
+    <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" onPress={() => undefined} style={styles.composerIconButton}>
+      {icon}
+    </Pressable>
+  );
+}
+
+function MessageBubble({ message, messages }: { message: Message; messages: Message[] }) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const presentation = getMessagePresentation(messages, message);
+  if (presentation.isCallEvent) {
+    return (
+      <View style={[styles.callEventBubble, presentation.isMissedCall && styles.missedCallEventBubble]}>
+        {presentation.isMissedCall ? <PhoneMissed color={colors.danger} size={17} /> : <Phone color={colors.textMuted} size={17} />}
+        <Text style={[styles.callEventText, presentation.isMissedCall && styles.missedCallEventText]}>{message.text}</Text>
+        <Text style={styles.callEventTime}>{formatMessageTime(message.createdAt)}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View
+      style={[
+        styles.messageBubble,
+        message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
+        presentation.incomingTail && styles.incomingBubbleTail,
+      ]}
+    >
+      <Text style={styles.messageText}>{message.text}</Text>
+      <View style={styles.messageMetaRow}>
+        <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
+        <ReceiptIcon state={presentation.receipt} />
+      </View>
+    </View>
+  );
+}
+
+function ReceiptIcon({ state }: { state: 'none' | 'sent' | 'delivered' | 'read' }) {
+  const { colors } = useTheme();
+  if (state === 'none') {
+    return null;
+  }
+  const iconColor = state === 'read' ? colors.accent : colors.textMuted;
+  return state === 'sent' ? <Check color={iconColor} size={15} strokeWidth={2.5} /> : <CheckCheck color={iconColor} size={15} strokeWidth={2.5} />;
+}
+
+function HeaderIconButton({
+  accessibilityLabel,
+  icon,
+  onPress,
+}: {
+  accessibilityLabel: string;
+  icon: ReactNode;
+  onPress: () => void;
+}) {
+  const styles = useStyles();
+  return (
+    <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" onPress={onPress} style={styles.headerIconButton}>
+      {icon}
+    </Pressable>
+  );
+}
+
 function CallScreen({
   audioRoute,
   cameraOff,
-  cameraFacing,
   chat,
   mode,
   muted,
+  selfAvatar,
   onEnd,
   onToggleAudioRoute,
   onToggleCamera,
@@ -443,53 +944,65 @@ function CallScreen({
 }: {
   audioRoute: AudioRoute;
   cameraOff: boolean;
-  cameraFacing: 'front' | 'back';
   chat: Chat;
   mode: CallMode;
   muted: boolean;
+  selfAvatar: LocalAvatar;
   onEnd: () => void;
   onToggleAudioRoute: () => void;
   onToggleCamera: () => void;
   onToggleCameraFacing: () => void;
   onToggleMuted: () => void;
 }) {
-  const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const dimensions = useWindowDimensions();
   const styles = useStyles();
-  const [connected, setConnected] = useState(mode === 'audio');
+  const [callPhase, setCallPhase] = useState<'calling' | 'connecting' | 'connected'>('calling');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [videoControlsHeight, setVideoControlsHeight] = useState(VIDEO_CONTROLS_FALLBACK_HEIGHT);
   const [pip, setPip] = useState(() => ({ x: dimensions.width - 132, y: insets.top + 84 }));
   const dragStart = useRef(pip);
   const movedDuringGesture = useRef(false);
 
   useEffect(() => {
-    setConnected(mode === 'audio');
+    setCallPhase('calling');
     setElapsedSeconds(0);
     setControlsVisible(true);
     setPip({ x: dimensions.width - 132, y: insets.top + 84 });
-    if (mode === 'audio') {
-      return undefined;
-    }
-    const timer = setTimeout(() => setConnected(true), 1800);
-    return () => clearTimeout(timer);
+    const timers =
+      mode === 'audio'
+        ? [setTimeout(() => setCallPhase('connecting'), 1100), setTimeout(() => setCallPhase('connected'), 2400)]
+        : [setTimeout(() => setCallPhase('connected'), 1800)];
+    return () => timers.forEach(timer => clearTimeout(timer));
   }, [chat.id, dimensions.width, insets.top, mode]);
 
   useEffect(() => {
-    if (!connected) {
+    if (callPhase !== 'connected') {
       return undefined;
     }
     const timer = setInterval(() => setElapsedSeconds(value => value + 1), 1000);
     return () => clearInterval(timer);
-  }, [connected]);
+  }, [callPhase]);
 
   const pipBounds = {
-    maxX: Math.max(spacing.md, dimensions.width - 116 - spacing.md),
-    maxY: Math.max(insets.top + spacing.md, dimensions.height - insets.bottom - 164),
+    maxX: Math.max(spacing.md, dimensions.width - PIP_WIDTH - spacing.md),
+    maxY: Math.max(
+      insets.top + spacing.md,
+      dimensions.height - insets.bottom - spacing.lg - videoControlsHeight - PIP_CONTROLS_GAP - PIP_HEIGHT,
+    ),
     minX: spacing.md,
     minY: insets.top + spacing.md,
   };
+  useEffect(() => {
+    setPip(current => {
+      const next = {
+        x: Math.min(Math.max(current.x, pipBounds.minX), pipBounds.maxX),
+        y: Math.min(Math.max(current.y, pipBounds.minY), pipBounds.maxY),
+      };
+      return next.x === current.x && next.y === current.y ? current : next;
+    });
+  }, [pipBounds.maxX, pipBounds.maxY, pipBounds.minX, pipBounds.minY]);
   const clampPip = (x: number, y: number) => ({
     x: Math.min(Math.max(x, pipBounds.minX), pipBounds.maxX),
     y: Math.min(Math.max(y, pipBounds.minY), pipBounds.maxY),
@@ -512,6 +1025,7 @@ function CallScreen({
   );
 
   const elapsed = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, '0')}:${String(elapsedSeconds % 60).padStart(2, '0')}`;
+  const statusText = callPhase === 'connected' ? elapsed : callPhase === 'connecting' ? 'Соединение...' : 'Вызов...';
   const toggleControls = () => {
     if (movedDuringGesture.current) {
       movedDuringGesture.current = false;
@@ -519,27 +1033,39 @@ function CallScreen({
     }
     setControlsVisible(value => !value);
   };
+  const handleVideoControlsLayout = ({ nativeEvent }: LayoutChangeEvent) => {
+    const nextHeight = Math.ceil(nativeEvent.layout.height);
+    if (nextHeight > 0 && nextHeight !== videoControlsHeight) {
+      setVideoControlsHeight(nextHeight);
+    }
+  };
 
   if (mode === 'audio') {
     return (
       <View style={styles.audioCallScreen}>
-        <Text style={styles.callLabel}>Исходящий аудиозвонок</Text>
-        <View style={[styles.callAvatar, { backgroundColor: chat.avatarColor }]}>
-          <Text style={styles.callAvatarText}>{chat.initials}</Text>
+        <CallBackdrop avatarColor={chat.avatarColor} initials={chat.initials} />
+        <View style={styles.audioCallIdentity}>
+          <View style={[styles.callAvatar, { backgroundColor: chat.avatarColor }]}>
+            <Text style={styles.callAvatarText}>{chat.initials}</Text>
+          </View>
+          <Text numberOfLines={1} style={styles.callName}>
+            {chat.name}
+          </Text>
+          <Text style={styles.callQuality}>{statusText}</Text>
         </View>
-        <Text style={styles.callName}>{chat.name}</Text>
-        <Text style={styles.callQuality}>{connected ? elapsed : 'Вызов...'}</Text>
-        <CallControls
-          audioRoute={audioRoute}
-          cameraOff={cameraOff}
-          mode={mode}
-          muted={muted}
-          onEnd={onEnd}
-          onToggleAudioRoute={onToggleAudioRoute}
-          onToggleCamera={onToggleCamera}
-          onToggleCameraFacing={onToggleCameraFacing}
-          onToggleMuted={onToggleMuted}
-        />
+        <View style={styles.audioControlsPanel}>
+          <CallControls
+            audioRoute={audioRoute}
+            cameraOff={cameraOff}
+            mode={mode}
+            muted={muted}
+            onEnd={onEnd}
+            onToggleAudioRoute={onToggleAudioRoute}
+            onToggleCamera={onToggleCamera}
+            onToggleCameraFacing={onToggleCameraFacing}
+            onToggleMuted={onToggleMuted}
+          />
+        </View>
       </View>
     );
   }
@@ -548,10 +1074,9 @@ function CallScreen({
     <View style={styles.videoCallScreen}>
       <Pressable onPress={toggleControls} style={StyleSheet.absoluteFill}>
         <MockVideoSurface
-          cameraFacing={connected ? 'back' : cameraFacing}
-          cameraOff={connected ? false : cameraOff}
-          color={connected ? chat.avatarColor : colors.accent}
-          label={connected ? chat.name : 'Вы'}
+          avatarColor={chat.avatarColor}
+          connected={callPhase === 'connected'}
+          initials={chat.initials}
         />
       </Pressable>
       {controlsVisible ? (
@@ -559,16 +1084,16 @@ function CallScreen({
           <Text numberOfLines={1} style={styles.videoCallName}>
             {chat.name}
           </Text>
-          <Text style={styles.videoCallStatus}>{connected ? elapsed : 'Вызов...'}</Text>
+          <Text style={styles.videoCallStatus}>{callPhase === 'connected' ? elapsed : 'Вызов...'}</Text>
         </View>
       ) : null}
-      {connected ? (
+      {callPhase === 'connected' ? (
         <View {...panResponder.panHandlers} style={[styles.pipVideo, { left: pip.x, top: pip.y }]}>
-          <MockVideoSurface cameraFacing={cameraFacing} cameraOff={cameraOff} color={colors.accent} label="Вы" compact />
+          <SelfPreview avatar={selfAvatar} cameraOff={cameraOff} />
         </View>
       ) : null}
       {controlsVisible ? (
-        <View style={styles.floatingControls}>
+        <View onLayout={handleVideoControlsLayout} style={styles.floatingControls}>
           <CallControls
             audioRoute={audioRoute}
             cameraOff={cameraOff}
@@ -587,33 +1112,50 @@ function CallScreen({
 }
 
 function MockVideoSurface({
-  cameraFacing,
-  cameraOff,
-  color,
-  compact = false,
-  label,
+  avatarColor,
+  connected,
+  initials,
 }: {
-  cameraFacing: 'front' | 'back';
-  cameraOff: boolean;
-  color: string;
-  compact?: boolean;
-  label: string;
+  avatarColor: string;
+  connected: boolean;
+  initials: string;
 }) {
+  const styles = useStyles();
+  return (
+    <View style={[styles.mockVideoSurface, { backgroundColor: avatarColor }]}>
+      <View style={connected ? styles.remoteVideoWash : styles.remoteAvatarBlur}>
+        <Text style={connected ? styles.remoteVideoInitials : styles.remoteAvatarInitials}>{initials}</Text>
+      </View>
+      <View style={connected ? styles.remoteVideoGlow : styles.remoteWaitingShade} />
+    </View>
+  );
+}
+
+function SelfPreview({ avatar, cameraOff }: { avatar: LocalAvatar; cameraOff: boolean }) {
+  const { colors } = useTheme();
   const styles = useStyles();
   if (cameraOff) {
     return (
-      <View style={styles.videoOffSurface}>
-        <VideoOff color="#ffffff" size={compact ? 22 : 34} strokeWidth={2.4} />
+      <View style={[styles.selfPreviewSurface, { backgroundColor: colors.accent }]}>
+        <Text style={styles.selfPreviewAvatar}>{avatar.initials}</Text>
+        <VideoOff color="#ffffff" size={24} strokeWidth={2.5} />
       </View>
     );
   }
   return (
-    <View style={[styles.mockVideoSurface, { backgroundColor: color }]}>
-      <View style={styles.mockVideoGlow} />
-      <Text numberOfLines={1} style={compact ? styles.mockVideoCompactText : styles.mockVideoText}>
-        {label}
-      </Text>
-      <Text style={compact ? styles.mockVideoCompactMeta : styles.mockVideoMeta}>{cameraFacing === 'front' ? 'front' : 'back'}</Text>
+    <View style={[styles.selfPreviewSurface, { backgroundColor: colors.accent }]}>
+      <View style={styles.selfPreviewGlow} />
+      <Camera color="#ffffff" size={26} strokeWidth={2.4} />
+    </View>
+  );
+}
+
+function CallBackdrop({ avatarColor, initials }: { avatarColor: string; initials: string }) {
+  const styles = useStyles();
+  return (
+    <View pointerEvents="none" style={[styles.callBackdrop, { backgroundColor: avatarColor }]}>
+      <Text style={styles.callBackdropInitials}>{initials}</Text>
+      <View style={styles.callBackdropShade} />
     </View>
   );
 }
@@ -703,40 +1245,204 @@ function IconCallButton({
   );
 }
 
-function CallsTab() {
+function CallsTab({
+  callLog,
+  onStartCall,
+}: {
+  callLog: CallLogEntry[];
+  onStartCall: (entry: CallLogEntry) => void;
+}) {
   const styles = useStyles();
+  const display = getCallLogDisplayModel(callLog);
   return (
-    <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>Звонки</Text>
-      <View style={styles.infoPanel}>
-        <Text style={styles.infoTitle}>Последний демо-звонок</Text>
-        <Text style={styles.bodyText}>Мама и папа · видео 240p · 12 минут · примерно 48 МБ.</Text>
-      </View>
-      <View style={styles.infoPanel}>
-        <Text style={styles.infoTitle}>Лестница соединения</Text>
-        <Text style={styles.bodyText}>Прямое соединение, домашний узел, зарубежный ретранслятор, затем аудио или видеосообщение.</Text>
-      </View>
+    <View style={styles.fullWidthList}>
+      {display.empty ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>{display.emptyText}</Text>
+        </View>
+      ) : (
+        display.rows.map(entry => <CallLogRow entry={entry} key={entry.id} onStartCall={onStartCall} />)
+      )}
     </View>
   );
 }
 
-function FamilyTab() {
+function CallLogRow({ entry, onStartCall }: { entry: CallLogEntry; onStartCall: (entry: CallLogEntry) => void }) {
+  const { colors } = useTheme();
   const styles = useStyles();
+  const isMissed = entry.direction === 'missed';
+  const directionColor = isMissed ? colors.danger : colors.accent;
+  const directionIcon =
+    entry.direction === 'incoming' ? (
+      <PhoneIncoming color={directionColor} size={17} />
+    ) : entry.direction === 'outgoing' ? (
+      <PhoneOutgoing color={directionColor} size={17} />
+    ) : (
+      <PhoneMissed color={directionColor} size={17} />
+    );
+  const callbackIcon =
+    entry.callbackType === 'video' ? <Video color={colors.accent} size={22} /> : <Phone color={colors.accent} size={22} />;
+  const callbackLabel = entry.callbackType === 'video' ? `Перезвонить ${entry.name} по видео` : `Перезвонить ${entry.name} голосом`;
+  const directionLabel =
+    entry.direction === 'incoming' ? 'Входящий' : entry.direction === 'outgoing' ? 'Исходящий' : 'Пропущенный';
   return (
-    <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>Семья</Text>
-      {FAMILY_MEMBERS.map(member => (
-        <View key={member.name} style={styles.familyRow}>
-          <View style={[styles.avatarSmall, { backgroundColor: member.color }]}>
-            <Text style={styles.avatarSmallText}>{member.initials}</Text>
-          </View>
-          <View>
-            <Text style={styles.chatName}>{member.name}</Text>
-            <Text style={styles.chatPreview}>{member.role}</Text>
-          </View>
+    <Pressable
+      accessibilityRole="button"
+      android_ripple={{ color: colors.accentSoft, borderless: false }}
+      onPress={() => undefined}
+      style={({ pressed }) => [styles.chatRow, pressed && styles.chatRowPressed]}
+    >
+      <View style={styles.chatAvatarWrap}>
+        <View style={[styles.avatar, { backgroundColor: entry.avatarColor }]}>
+          <Text style={styles.avatarText}>{entry.initials}</Text>
         </View>
+      </View>
+      <View style={styles.callLogMain}>
+        <Text numberOfLines={1} style={styles.chatName}>
+          {entry.name}
+        </Text>
+        <View style={styles.callLogMeta}>
+          {directionIcon}
+          <Text numberOfLines={1} style={[styles.chatPreview, isMissed && styles.callLogMissedText]}>
+            {directionLabel} · {formatCallLogTime(entry.occurredAt)}
+          </Text>
+        </View>
+      </View>
+      <Pressable
+        accessibilityLabel={callbackLabel}
+        accessibilityRole="button"
+        onPress={() => onStartCall(entry)}
+        style={({ pressed }) => [styles.callLogAction, pressed && styles.pressed]}
+      >
+        {callbackIcon}
+      </Pressable>
+    </Pressable>
+  );
+}
+
+function formatCallLogTime(value: string): string {
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(new Date(value));
+}
+
+function FamilyTab({
+  selectedFamilyIds,
+  onStartCall,
+  onStartSelectingFamilyMember,
+  onToggleSelectedFamilyMember,
+}: {
+  selectedFamilyIds: string[];
+  onStartCall: (memberName: string, mode: CallMode) => void;
+  onStartSelectingFamilyMember: (memberId: string) => void;
+  onToggleSelectedFamilyMember: (memberId: string) => void;
+}) {
+  const styles = useStyles();
+  const selectionMode = selectedFamilyIds.length > 0;
+  return (
+    <View style={styles.fullWidthList}>
+      {FAMILY_MEMBERS.map(member => (
+        <FamilyRow
+          key={member.name}
+          member={member}
+          selected={selectedFamilyIds.includes(member.name)}
+          selectionMode={selectionMode}
+          onStartCall={onStartCall}
+          onLongPress={() => (selectionMode ? onToggleSelectedFamilyMember(member.name) : onStartSelectingFamilyMember(member.name))}
+          onPress={() => (selectionMode ? onToggleSelectedFamilyMember(member.name) : undefined)}
+        />
       ))}
     </View>
+  );
+}
+
+function FamilyRow({
+  member,
+  selected,
+  selectionMode,
+  onLongPress,
+  onPress,
+  onStartCall,
+}: {
+  member: (typeof FAMILY_MEMBERS)[number];
+  selected: boolean;
+  selectionMode: boolean;
+  onLongPress: () => void;
+  onPress: () => void;
+  onStartCall: (memberName: string, mode: CallMode) => void;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const selectedProgress = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(selectedProgress, {
+      duration: 130,
+      toValue: selected ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+  }, [selected, selectedProgress]);
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      android_ripple={{ color: colors.accentSoft, borderless: false }}
+      delayLongPress={220}
+      onLongPress={onLongPress}
+      onPress={onPress}
+      style={({ pressed }) => [styles.chatRow, member.name === 'Айгуль М.' && styles.familySelfRow, pressed && styles.chatRowPressed]}
+    >
+      <Animated.View pointerEvents="none" style={[styles.chatSelectionFill, { opacity: selectedProgress }]} />
+      <View style={styles.chatAvatarWrap}>
+        <View style={[styles.avatar, { backgroundColor: member.color }]}>
+          <Text style={styles.avatarText}>{member.initials}</Text>
+        </View>
+        {selected || selectionMode ? (
+          <Animated.View
+            style={[
+              styles.selectedCheck,
+              {
+                opacity: selectedProgress,
+                transform: [{ scale: selectedProgress.interpolate({ inputRange: [0, 1], outputRange: [0.75, 1] }) }],
+              },
+            ]}
+          >
+            <Check color={colors.surface} size={14} strokeWidth={3} />
+          </Animated.View>
+        ) : null}
+      </View>
+      <View style={styles.chatMain}>
+        <Text numberOfLines={1} style={styles.chatName}>
+          {member.name}
+        </Text>
+        <Text ellipsizeMode="tail" numberOfLines={1} style={styles.chatPreview}>
+          {member.role}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityLabel={`Позвонить ${member.name} голосом`}
+        accessibilityRole="button"
+        disabled={selectionMode}
+        onPress={() => onStartCall(member.name, 'audio')}
+        style={({ pressed }) => [styles.callLogAction, pressed && styles.pressed, selectionMode && styles.disabledAction]}
+      >
+        <Phone color={selectionMode ? colors.textMuted : colors.accent} size={22} />
+      </Pressable>
+      <Pressable
+        accessibilityLabel={`Позвонить ${member.name} по видео`}
+        accessibilityRole="button"
+        disabled={selectionMode}
+        onPress={() => onStartCall(member.name, 'video')}
+        style={({ pressed }) => [styles.callLogAction, pressed && styles.pressed, selectionMode && styles.disabledAction]}
+      >
+        <Video color={selectionMode ? colors.textMuted : colors.accent} size={22} />
+      </Pressable>
+    </Pressable>
   );
 }
 
@@ -756,10 +1462,9 @@ function SettingsTab({
   const selectedMode = TRAFFIC_MODES.find(mode => mode.key === trafficMode) ?? TRAFFIC_MODES[1];
   return (
     <View style={styles.stack}>
-      <Text style={styles.sectionTitle}>Настройки</Text>
       <View style={styles.profilePanel}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>АМ</Text>
+          <Text style={styles.avatarText}>{SELF_AVATAR.initials}</Text>
         </View>
         <View>
           <Text style={styles.chatName}>Айгуль М.</Text>
@@ -815,27 +1520,105 @@ function SettingsTab({
           />
         </View>
       </View>
+      <View style={styles.infoPanel}>
+        <AboutBrand />
+      </View>
     </View>
   );
 }
 
-function BottomTabs({ activeTab, onSelect }: { activeTab: TabKey; onSelect: (tab: TabKey) => void }) {
+function BottomTabs({
+  activeTab,
+  chats,
+  callLog,
+  onSelect,
+}: {
+  activeTab: TabKey;
+  chats: Chat[];
+  callLog: CallLogEntry[];
+  onSelect: (tab: TabKey) => void;
+}) {
   const styles = useStyles();
-  const tabs: { key: TabKey; label: string }[] = [
-    { key: 'chats', label: 'Чаты' },
-    { key: 'calls', label: 'Звонки' },
-    { key: 'family', label: 'Семья' },
-    { key: 'settings', label: 'Настройки' },
+  const tabs: { key: TabKey; label: string; accessibilityLabel: string; icon: typeof MessageCircle; badge?: number }[] = [
+    { key: 'chats', label: 'Чаты', accessibilityLabel: 'Чаты', icon: MessageCircle, badge: getTotalUnreadCount(chats) },
+    { key: 'calls', label: 'Звонки', accessibilityLabel: 'Звонки', icon: Phone, badge: getMissedCallCount(callLog) },
+    { key: 'family', label: 'Семья', accessibilityLabel: 'Семья', icon: Users },
+    { key: 'settings', label: 'Настройки', accessibilityLabel: 'Настройки', icon: Settings },
   ];
   return (
     <View style={styles.tabs}>
-      {tabs.map(tab => (
-        <Pressable accessibilityRole="tab" key={tab.key} onPress={() => onSelect(tab.key)} style={styles.tabButton}>
-          <Text style={[styles.tabText, activeTab === tab.key && styles.tabTextActive]}>{tab.label}</Text>
-          {activeTab === tab.key ? <View style={styles.tabIndicator} /> : null}
-        </Pressable>
-      ))}
+      {tabs.map(tab => {
+        return (
+          <BottomTabButton
+            badge={tab.badge ?? 0}
+            Icon={tab.icon}
+            key={tab.key}
+            label={tab.label}
+            accessibilityLabel={tab.accessibilityLabel}
+            onPress={() => onSelect(tab.key)}
+            selected={activeTab === tab.key}
+          />
+        );
+      })}
     </View>
+  );
+}
+
+function BottomTabButton({
+  Icon,
+  accessibilityLabel,
+  badge,
+  label,
+  onPress,
+  selected,
+}: {
+  Icon: typeof MessageCircle;
+  accessibilityLabel: string;
+  badge: number;
+  label: string;
+  onPress: () => void;
+  selected: boolean;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  const selectedProgress = useRef(new Animated.Value(selected ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(selectedProgress, {
+      duration: 170,
+      toValue: selected ? 1 : 0,
+      useNativeDriver: true,
+    }).start();
+  }, [selected, selectedProgress]);
+
+  return (
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="tab"
+      accessibilityState={{ selected }}
+      onPress={onPress}
+      style={styles.tabButton}
+    >
+      <View style={styles.tabIconSlot}>
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.tabActiveCapsule,
+            {
+              opacity: selectedProgress,
+              transform: [{ scaleX: selectedProgress.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }) }],
+            },
+          ]}
+        />
+        <Icon color={selected ? colors.accentDark : colors.textMuted} size={24} strokeWidth={2.4} />
+        {badge > 0 ? (
+          <View style={styles.tabBadge}>
+            <Text style={styles.tabBadgeText}>{badge}</Text>
+          </View>
+        ) : null}
+      </View>
+      <Text style={[styles.tabText, selected && styles.tabTextActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -849,55 +1632,83 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   safeArea: { flex: 1, backgroundColor: colors.background },
   appShell: { flex: 1, backgroundColor: colors.background },
   welcome: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, paddingTop: insets.top + spacing.xl, gap: spacing.md },
-  brandMark: {
-    alignItems: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: radius.full,
-    height: 72,
-    justifyContent: 'center',
-    width: 72,
-  },
-  brandMarkText: { color: colors.surface, fontSize: 34, fontWeight: '800' },
+  brandMarkHero: { height: 104, width: 104 },
   heroTitle: { color: colors.text, fontSize: 42, fontWeight: '800' },
   heroText: { color: colors.textSecondary, fontSize: typography.lg, lineHeight: 25 },
-  header: {
+  topHeader: {
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    flexDirection: 'row',
+    height: insets.top + 64,
+    justifyContent: 'space-between',
+    paddingLeft: spacing.md,
+    paddingRight: spacing.sm,
+    paddingBottom: 0,
+    paddingTop: insets.top,
+  },
+  topHeaderBrand: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: 12, minWidth: 0 },
+  topHeaderText: { flex: 1, minWidth: 0 },
+  brandMarkHeader: { height: 48, width: 48 },
+  topHeaderTitle: { color: colors.accentDark, fontSize: 25, fontWeight: '800' },
+  topHeaderSubtitle: { color: colors.textMuted, fontSize: typography.sm, marginTop: 2 },
+  headerSubtitle: { color: colors.textMuted, fontSize: typography.sm, marginTop: 2 },
+  chatsHeader: {
+    backgroundColor: colors.background,
+    height: insets.top + 64,
+    paddingTop: insets.top,
+  },
+  headerLayer: {
+    alignItems: 'center',
+    bottom: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    left: 0,
+    minHeight: 64,
+    paddingLeft: spacing.md,
+    paddingRight: spacing.sm,
+    position: 'absolute',
+    right: 0,
+    top: insets.top,
+  },
+  headerSearchInput: {
+    color: colors.text,
+    flex: 1,
+    fontSize: typography.md,
+    minHeight: 48,
+    minWidth: 0,
+    paddingHorizontal: spacing.xs,
+  },
+  selectionHeader: {
     alignItems: 'center',
     backgroundColor: colors.surface,
     borderBottomColor: colors.border,
     borderBottomWidth: 1,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
+    gap: spacing.sm,
+    paddingHorizontal: spacing.sm,
     paddingBottom: spacing.md,
     paddingTop: insets.top + spacing.md,
   },
-  headerTitle: { color: colors.accentDark, fontSize: 28, fontWeight: '800' },
-  headerSubtitle: { color: colors.textMuted, fontSize: typography.sm, marginTop: 2 },
-  statusPill: { backgroundColor: colors.accentSoft, borderRadius: radius.full, paddingHorizontal: spacing.sm, paddingVertical: 6 },
-  statusPillText: { color: colors.accentDark, fontSize: typography.xs, fontWeight: '700' },
+  selectionCount: { color: colors.text, flex: 1, fontSize: 22, fontWeight: '800' },
+  selectionActions: { alignItems: 'center', flexDirection: 'row', flexShrink: 0 },
   content: { padding: spacing.md, paddingBottom: spacing.xl, gap: spacing.md },
+  topLevelListContent: { paddingTop: 0 },
   stack: { gap: spacing.md },
-  searchInput: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: typography.md,
-    minHeight: 48,
-    paddingHorizontal: spacing.md,
-  },
+  chatList: { marginHorizontal: -spacing.md },
+  fullWidthList: { marginHorizontal: -spacing.md },
   chatRow: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.md,
-    borderWidth: 1,
+    alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.md,
-    minHeight: 76,
-    padding: spacing.md,
+    minHeight: 72,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
+  chatRowPressed: { backgroundColor: 'rgba(17,97,73,0.10)' },
+  chatSelectionFill: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0, backgroundColor: colors.accentSoft },
   pressed: { opacity: 0.72 },
+  chatAvatarWrap: { height: 52, width: 52 },
   avatar: {
     alignItems: 'center',
     borderRadius: radius.full,
@@ -906,6 +1717,19 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     width: 52,
   },
   avatarText: { color: colors.surface, fontSize: typography.md, fontWeight: '800' },
+  selectedCheck: {
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    borderColor: colors.surface,
+    borderRadius: radius.full,
+    borderWidth: 2,
+    bottom: -1,
+    height: 22,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: -1,
+    width: 22,
+  },
   avatarSmall: {
     alignItems: 'center',
     borderRadius: radius.full,
@@ -914,11 +1738,11 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     width: 42,
   },
   avatarSmallText: { color: colors.surface, fontSize: typography.sm, fontWeight: '800' },
-  chatMain: { flex: 1, gap: 4 },
+  chatMain: { flex: 1, gap: 4, minWidth: 0 },
   rowBetween: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
   chatName: { color: colors.text, flexShrink: 1, fontSize: typography.md, fontWeight: '700' },
-  chatTime: { color: colors.textMuted, fontSize: typography.xs },
-  chatPreview: { color: colors.textSecondary, flexShrink: 1, fontSize: typography.sm },
+  chatTime: { color: colors.textMuted, flexShrink: 0, fontSize: typography.xs },
+  chatPreview: { color: colors.textSecondary, flex: 1, fontSize: typography.sm, minWidth: 0 },
   trafficLabel: { color: colors.accent, fontSize: typography.xs, fontWeight: '700' },
   unreadBadge: {
     alignItems: 'center',
@@ -952,9 +1776,11 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   secondaryButtonText: { color: colors.accent, fontSize: typography.md, fontWeight: '800' },
   infoPanel: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, gap: spacing.sm, padding: spacing.md },
+  aboutBrand: { alignItems: 'center', flexDirection: 'row', gap: spacing.md },
+  aboutBrandText: { flex: 1, gap: 4 },
+  brandMarkAbout: { height: 56, width: 56 },
   infoTitle: { color: colors.text, fontSize: typography.md, fontWeight: '800' },
   bodyText: { color: colors.textSecondary, fontSize: typography.sm, lineHeight: 21 },
-  sectionTitle: { color: colors.text, fontSize: 24, fontWeight: '800' },
   conversationHeader: {
     alignItems: 'center',
     backgroundColor: colors.surface,
@@ -966,12 +1792,38 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     paddingBottom: spacing.sm,
     paddingTop: insets.top + spacing.sm,
   },
-  iconButton: { alignItems: 'center', borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
-  iconButtonText: { color: colors.accent, fontSize: 32, fontWeight: '700' },
-  conversationTitle: { flex: 1 },
-  headerAction: { alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: spacing.sm },
-  headerActionText: { color: colors.accent, fontSize: typography.sm, fontWeight: '800' },
-  messages: { flexGrow: 1, gap: spacing.sm, padding: spacing.md, paddingBottom: spacing.xl },
+  headerIconButton: { alignItems: 'center', borderRadius: radius.full, height: 48, justifyContent: 'center', width: 48 },
+  conversationTitle: { flex: 1, minWidth: 0 },
+  messageArea: { backgroundColor: colors.background, flex: 1 },
+  messageList: { flex: 1 },
+  messages: { flexGrow: 1, gap: spacing.sm, justifyContent: 'flex-start', padding: spacing.md, paddingBottom: 92 },
+  chatPattern: {
+    bottom: 0,
+    left: 0,
+    opacity: 0.26,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  patternDot: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.full,
+    height: 9,
+    position: 'absolute',
+    width: 9,
+  },
+  patternDotOne: { left: '18%', top: '20%' },
+  patternDotTwo: { right: '14%', top: '62%' },
+  patternRing: {
+    borderColor: colors.accentSoft,
+    borderRadius: radius.full,
+    borderWidth: 2,
+    height: 28,
+    position: 'absolute',
+    width: 28,
+  },
+  patternRingOne: { right: '24%', top: '34%' },
+  patternRingTwo: { left: '12%', top: '72%' },
   dateDivider: {
     alignSelf: 'center',
     backgroundColor: colors.accentSoft,
@@ -983,52 +1835,115 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     paddingHorizontal: spacing.sm,
     paddingVertical: 5,
   },
-  messageBubble: { borderRadius: radius.lg, maxWidth: '82%', padding: spacing.sm },
-  incomingBubble: { alignSelf: 'flex-start', backgroundColor: colors.surface, borderTopLeftRadius: 4 },
+  messageBubble: { borderRadius: 16, maxWidth: '82%', minWidth: 74, paddingHorizontal: spacing.sm, paddingBottom: 5, paddingTop: 7 },
+  incomingBubble: { alignSelf: 'flex-start', backgroundColor: colors.surface },
+  incomingBubbleTail: { borderTopLeftRadius: 4 },
   outgoingBubble: { alignSelf: 'flex-end', backgroundColor: colors.outgoing, borderTopRightRadius: 4 },
   messageText: { color: colors.text, fontSize: typography.md, lineHeight: 22 },
-  messageMeta: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: typography.xs, marginTop: 4 },
-  composer: {
+  messageMetaRow: { alignItems: 'center', alignSelf: 'flex-end', flexDirection: 'row', gap: 2, marginTop: 3 },
+  messageMeta: { color: colors.textMuted, fontSize: typography.xs },
+  callEventBubble: {
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 7,
+    maxWidth: '88%',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+  },
+  missedCallEventBubble: { borderColor: 'rgba(185, 28, 28, 0.24)' },
+  callEventText: { color: colors.textSecondary, flexShrink: 1, fontSize: typography.xs, fontWeight: '700' },
+  missedCallEventText: { color: colors.danger },
+  callEventTime: { alignSelf: 'flex-end', color: colors.textMuted, fontSize: 10, fontWeight: '700', marginBottom: -1 },
+  composerOverlay: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: 7,
+    paddingBottom: insets.bottom + 7,
+    paddingHorizontal: 7,
+    paddingTop: 7,
+  },
+  composerCapsule: {
     alignItems: 'flex-end',
     backgroundColor: colors.surface,
-    borderTopColor: colors.border,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingBottom: insets.bottom + spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  attachButton: { alignItems: 'center', borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
-  attachText: { color: colors.textMuted, fontSize: 28 },
-  composerInput: {
-    backgroundColor: colors.background,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    borderRadius: 24,
     borderWidth: 1,
+    flex: 1,
+    flexDirection: 'row',
+    minHeight: 48,
+    paddingHorizontal: 5,
+    paddingVertical: 4,
+  },
+  composerIconButton: { alignItems: 'center', borderRadius: radius.full, height: 40, justifyContent: 'center', width: 38 },
+  composerInput: {
     color: colors.text,
     flex: 1,
     fontSize: typography.md,
-    maxHeight: 112,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    lineHeight: 21,
+    maxHeight: 126, // Six 21dp lines before the input scrolls internally.
+    minHeight: 40,
+    paddingHorizontal: 4,
+    paddingTop: Platform.OS === 'android' ? 8 : 10,
+    paddingBottom: Platform.OS === 'android' ? 7 : 9,
   },
-  sendButton: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.full, height: 44, justifyContent: 'center', width: 44 },
-  sendButtonText: { color: colors.surface, fontSize: 22, fontWeight: '800' },
+  composerAction: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.full, height: 48, justifyContent: 'center', width: 48 },
+  composerActionIcon: { position: 'absolute' },
   audioCallScreen: {
     alignItems: 'center',
     backgroundColor: colors.callBackground,
     flex: 1,
-    gap: spacing.md,
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    paddingBottom: insets.bottom + spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: insets.top + spacing.xl,
+  },
+  callBackdrop: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
     justifyContent: 'center',
-    padding: spacing.lg,
+    opacity: 0.95,
+  },
+  callBackdropInitials: { color: colors.surface, fontSize: 168, fontWeight: '900', opacity: 0.13 },
+  callBackdropShade: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(5,14,11,0.68)',
+  },
+  audioCallIdentity: {
+    alignItems: 'center',
+    gap: spacing.md,
+    marginTop: spacing.xl,
+    maxWidth: '100%',
+    zIndex: 1,
   },
   callLabel: { color: colors.callMuted, fontSize: typography.sm, fontWeight: '700' },
-  callAvatar: { alignItems: 'center', borderRadius: radius.full, height: 112, justifyContent: 'center', width: 112 },
+  callAvatar: {
+    alignItems: 'center',
+    borderColor: 'rgba(255,255,255,0.18)',
+    borderRadius: radius.full,
+    borderWidth: 1,
+    height: 112,
+    justifyContent: 'center',
+    width: 112,
+  },
   callAvatarText: { color: colors.surface, fontSize: 38, fontWeight: '900' },
-  callName: { color: colors.surface, fontSize: 30, fontWeight: '800', textAlign: 'center' },
+  callName: { color: colors.surface, fontSize: 30, fontWeight: '800', maxWidth: '100%', textAlign: 'center' },
   callQuality: { color: colors.callMuted, fontSize: typography.md, textAlign: 'center' },
+  audioControlsPanel: {
+    alignSelf: 'stretch',
+    backgroundColor: 'rgba(8,19,15,0.64)',
+    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 30,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.md,
+    zIndex: 1,
+  },
   videoCallScreen: {
     backgroundColor: colors.callBackground,
     flex: 1,
@@ -1039,10 +1954,27 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     justifyContent: 'center',
     overflow: 'hidden',
   },
-  mockVideoGlow: {
+  remoteVideoGlow: {
     ...StyleSheet.absoluteFill,
-    backgroundColor: 'rgba(255,255,255,0.10)',
-    transform: [{ rotate: '-18deg' }, { scale: 1.4 }],
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  remoteVideoWash: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    justifyContent: 'center',
+  },
+  remoteVideoInitials: { color: colors.surface, fontSize: 220, fontWeight: '900', opacity: 0.08 },
+  remoteAvatarBlur: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+    transform: [{ scale: 1.18 }],
+  },
+  remoteAvatarInitials: { color: colors.surface, fontSize: 176, fontWeight: '900', opacity: 0.24 },
+  remoteWaitingShade: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(5,14,11,0.42)',
   },
   mockVideoText: { color: colors.surface, fontSize: 34, fontWeight: '900', textAlign: 'center' },
   mockVideoMeta: { color: colors.surface, fontSize: typography.sm, fontWeight: '800', marginTop: spacing.sm, opacity: 0.74 },
@@ -1063,13 +1995,28 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   videoCallName: { color: colors.surface, fontSize: 26, fontWeight: '900', textAlign: 'center' },
   videoCallStatus: { color: colors.surface, fontSize: typography.md, fontWeight: '800', marginTop: 4, opacity: 0.85, textAlign: 'center' },
   pipVideo: {
-    borderColor: 'rgba(255,255,255,0.86)',
-    borderRadius: radius.md,
-    borderWidth: 2,
-    height: 148,
+    borderRadius: 16,
+    elevation: 8,
+    height: PIP_HEIGHT,
     overflow: 'hidden',
     position: 'absolute',
-    width: 116,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.28,
+    shadowRadius: 14,
+    width: PIP_WIDTH,
+  },
+  selfPreviewSurface: {
+    alignItems: 'center',
+    flex: 1,
+    gap: spacing.sm,
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  selfPreviewAvatar: { color: colors.surface, fontSize: 28, fontWeight: '900' },
+  selfPreviewGlow: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(255,255,255,0.10)',
   },
   floatingControls: {
     bottom: insets.bottom + spacing.lg,
@@ -1099,7 +2046,20 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   callIconButtonDanger: {
     backgroundColor: colors.danger,
   },
-  familyRow: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, flexDirection: 'row', gap: spacing.md, padding: spacing.md },
+  callLogMain: { flex: 1, gap: 6, minWidth: 0 },
+  callLogMeta: { alignItems: 'center', flexDirection: 'row', gap: 6 },
+  callLogMissedText: { color: colors.danger },
+  callLogAction: {
+    alignItems: 'center',
+    borderRadius: radius.full,
+    height: 48,
+    justifyContent: 'center',
+    minHeight: 48,
+    minWidth: 48,
+    width: 48,
+  },
+  disabledAction: { opacity: 0.5 },
+  familySelfRow: { marginBottom: spacing.xs },
   profilePanel: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, flexDirection: 'row', gap: spacing.md, padding: spacing.md },
   segmented: { backgroundColor: colors.background, borderRadius: radius.md, flexDirection: 'row', padding: 4 },
   segment: { alignItems: 'center', borderRadius: radius.sm, flex: 1, justifyContent: 'center', minHeight: 40, paddingHorizontal: 6 },
@@ -1113,11 +2073,35 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     borderTopColor: colors.border,
     borderTopWidth: 1,
     flexDirection: 'row',
-    minHeight: 64,
-    paddingBottom: insets.bottom + 4,
+    minHeight: 72,
+    paddingBottom: insets.bottom + 6,
+    paddingTop: 6,
   },
-  tabButton: { alignItems: 'center', flex: 1, justifyContent: 'center', minHeight: 56 },
+  tabButton: { alignItems: 'center', flex: 1, gap: 2, justifyContent: 'center', minHeight: 56 },
+  tabIconSlot: { alignItems: 'center', height: 32, justifyContent: 'center', width: 64 },
+  tabActiveCapsule: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.full,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
   tabText: { color: colors.textMuted, fontSize: typography.sm, fontWeight: '800' },
-  tabTextActive: { color: colors.accent },
-  tabIndicator: { backgroundColor: colors.accent, borderRadius: radius.full, height: 4, marginTop: 5, width: 24 },
+  tabTextActive: { color: colors.accentDark },
+  tabBadge: {
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    borderColor: colors.surface,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    justifyContent: 'center',
+    minWidth: 18,
+    paddingHorizontal: 4,
+    position: 'absolute',
+    right: 14,
+    top: -2,
+  },
+  tabBadgeText: { color: colors.surface, fontSize: 10, fontWeight: '900' },
 });
