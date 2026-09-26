@@ -1,0 +1,15 @@
+{
+  "name": "hearth-canary-v4-server",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/main.mjs",
+    "test": "node --test",
+    "typecheck": "node --check src/*.mjs test/*.mjs",
+    "lint": "node --check src/*.mjs test/*.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
