@@ -1,0 +1,27 @@
+[Unit]
+Description=Hearth Canary v4 endpoint
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/projects/che-tam/canary-v4/server
+Environment=CANARY_HOST=127.0.0.1
+Environment=CANARY_PORT=9999
+Environment=CANARY_DATA_DIR=/root/canary-data
+EnvironmentFile=-/root/canary-data/secrets.env
+ExecStart=/usr/bin/node src/main.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/root/canary-data
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

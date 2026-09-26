@@ -26,7 +26,11 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     '',
   ].join('\r\n'));
 
-  logger.info?.('canary_ws_open', { connectionId, deviceLabel, openedAt: new Date().toISOString() });
+  logger.info?.('canary_ws_open', {
+    connectionId,
+    deviceLabel,
+    timestamp: new Date().toISOString(),
+  });
   const state = { buffer: Buffer.alloc(0), closed: false, closeCode: null };
 
   socket.on('data', (chunk) => {
@@ -37,7 +41,7 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     logger.info?.('canary_ws_close', {
       connectionId,
       deviceLabel,
-      closedAt: new Date().toISOString(),
+      timestamp: new Date().toISOString(),
       closeCode: state.closeCode,
     });
   });

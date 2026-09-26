@@ -19,3 +19,11 @@ Status: implemented
 Date: 2026-09-26
 
 Notes: Canary v4 server code added under canary-v4/server with local unit coverage for health, WebSocket echo/ping, protected upload, gzip journal ingest/deduplication, and disabled TURN credentials. Production HTTPS/TURN/service checks are intentionally not run in this step.
+
+## TASK-001d-1 / subtask 1
+
+Status: implemented
+
+Date: 2026-09-26
+
+Notes: WebSocket open/close logs now use versioned metadata fields with connectionId, deviceLabel, timestamp, and closeCode on close. Added local-only UDP echo entrypoint and test coverage using an ephemeral port. Added versioned deploy templates for endpoint/UDP echo systemd units and coturn, plus deploy notes without real secrets. Production service, firewall, coturn, network curl, and APK checks were not run by instruction.

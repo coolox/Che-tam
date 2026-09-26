@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { createSocket } from 'node:dgram';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
 import { gzipSync } from 'node:zlib';
@@ -7,6 +8,7 @@ import { after, before, describe, it } from 'node:test';
 import { CANARY_PATH, MAX_UPLOAD_BYTES } from '../src/config.mjs';
 import { MemoryJournalStore } from '../src/journal-store.mjs';
 import { createCanaryServer } from '../src/server.mjs';
+import { createUdpEchoServer } from '../src/udp-echo.mjs';
 
 const TEST_KEY = 'test-key';
 
@@ -139,6 +141,64 @@ describe('Canary v4 server', () => {
 
     client.end(maskedFrame(0x8, Buffer.alloc(0)));
   });
+
+  it('logs WebSocket open and close metadata', async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await new Promise((resolve) => logServer.listen(0, '127.0.0.1', resolve));
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const client = await openWebSocket(url, CANARY_PATH, { 'X-Device-Label': 'tm-1' });
+      client.write(maskedFrame(0x8, closePayload(1001)));
+      await onceEvent(client, 'close');
+      await waitForLog(logs, 'canary_ws_close');
+
+      const openLog = logs.find((entry) => entry.event === 'canary_ws_open');
+      const closeLog = logs.find((entry) => entry.event === 'canary_ws_close');
+
+      assert.equal(openLog.fields.deviceLabel, 'tm-1');
+      assert.equal(typeof openLog.fields.connectionId, 'string');
+      assert.match(openLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+      assert.equal(closeLog.fields.connectionId, openLog.fields.connectionId);
+      assert.equal(closeLog.fields.deviceLabel, 'tm-1');
+      assert.match(closeLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+      assert.equal(closeLog.fields.closeCode, 1001);
+    } finally {
+      await new Promise((resolve) => logServer.close(resolve));
+    }
+  });
+});
+
+describe('Canary v4 UDP echo server', () => {
+  it('echoes UDP datagrams on a local ephemeral port', async () => {
+    const echoServer = createUdpEchoServer({
+      host: '127.0.0.1',
+      port: 0,
+      logger: silentLogger(),
+    });
+    const address = await echoServer.listen();
+    const client = createSocket('udp4');
+
+    try {
+      const payload = Buffer.from('udp-echo-test');
+      const echoed = await sendUdpAndReceive(client, payload, address.port, address.address);
+      assert.deepEqual(echoed, payload);
+    } finally {
+      client.close();
+      await echoServer.close();
+    }
+  });
 });
 
 function requestJson(url, { method = 'GET', headers = {}, body = null } = {}) {
@@ -169,9 +229,10 @@ function requestJson(url, { method = 'GET', headers = {}, body = null } = {}) {
   });
 }
 
-function openWebSocket(baseUrl, path) {
+function openWebSocket(baseUrl, path, headers = {}) {
   const url = new URL(baseUrl);
   const key = randomBytes(16).toString('base64');
+  const headerLines = Object.entries(headers).map(([name, value]) => `${name}: ${value}`);
 
   return new Promise((resolve, reject) => {
     const socket = connect(Number(url.port), url.hostname, () => {
@@ -182,6 +243,7 @@ function openWebSocket(baseUrl, path) {
         'Connection: Upgrade',
         `Sec-WebSocket-Key: ${key}`,
         'Sec-WebSocket-Version: 13',
+        ...headerLines,
         '',
         '',
       ].join('\r\n'));
@@ -204,6 +266,12 @@ function openWebSocket(baseUrl, path) {
     });
     socket.on('error', reject);
   });
+}
+
+function closePayload(code) {
+  const payload = Buffer.alloc(2);
+  payload.writeUInt16BE(code);
+  return payload;
 }
 
 function maskedFrame(opcode, payload) {
@@ -232,6 +300,43 @@ function readFrame(socket) {
       resolve({ opcode, payload: buffer.subarray(2, 2 + length) });
     }
   });
+}
+
+function onceEvent(emitter, eventName) {
+  return new Promise((resolve, reject) => {
+    emitter.once(eventName, resolve);
+    emitter.once('error', reject);
+  });
+}
+
+function sendUdpAndReceive(socket, payload, port, host) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('udp echo timeout')), 1_000);
+
+    socket.once('message', (message) => {
+      clearTimeout(timer);
+      resolve(message);
+    });
+    socket.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    socket.send(payload, port, host, (error) => {
+      if (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  });
+}
+
+async function waitForLog(logs, eventName) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (logs.some((entry) => entry.event === eventName)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 function silentLogger() {

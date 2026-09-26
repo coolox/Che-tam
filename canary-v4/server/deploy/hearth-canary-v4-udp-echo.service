@@ -1,0 +1,25 @@
+[Unit]
+Description=Hearth Canary v4 UDP echo service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/projects/che-tam/canary-v4/server
+Environment=CANARY_UDP_ECHO_HOST=127.0.0.1
+Environment=CANARY_UDP_ECHO_PORT=9999
+EnvironmentFile=-/root/canary-data/secrets.env
+ExecStart=/usr/bin/node src/udp-echo-main.mjs
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
