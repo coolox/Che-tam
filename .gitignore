@@ -21,3 +21,6 @@ coverage/
 *.bak
 android/.kotlin/
 releases/
+
+# Locally produced Android packages
+*.apk

@@ -14,16 +14,10 @@ Notes: Expo/React Native dependency baseline updated to SDK 57-compatible versio
 
 ## TASK-001d-1
 
-Status: implemented
+Status: accepted
 
-Date: 2026-09-26
+Date: 2026-09-27
 
-Notes: Canary v4 server code added under canary-v4/server with local unit coverage for health, WebSocket echo/ping, protected upload, gzip journal ingest/deduplication, and disabled TURN credentials. Production HTTPS/TURN/service checks are intentionally not run in this step.
+Notes: Canary v4 is deployed as enabled systemd endpoint and UDP echo services on system Node.js. HTTPS `/hearth-canary/`, protected upload (including 2 MiB), gzip journal, TURN credential issuance, WebSocket echo/ping-pong and five-minute idle keepalive were verified. Coturn exposes TCP 3478 and TLS 5349 only, uses REST shared-secret authentication and permits relay peers only at the local UDP echo. UFW permits only SSH, HTTP/ACME, HTTPS, TURN TCP and TURN TLS inbound. Daily secret-excluding data archives are timer-driven under `/root/backups/canary-data/`.
 
-## TASK-001d-1 / subtask 1
-
-Status: implemented
-
-Date: 2026-09-26
-
-Notes: WebSocket open/close logs now use versioned metadata fields with connectionId, deviceLabel, timestamp, and closeCode on close. Added local-only UDP echo entrypoint and test coverage using an ephemeral port. Added versioned deploy templates for endpoint/UDP echo systemd units and coturn, plus deploy notes without real secrets. Production service, firewall, coturn, network curl, and APK checks were not run by instruction.
+Certificate renewal now uses nginx webroot HTTP-01 on IPv4/IPv6 and `reuse_key = True`; simulated renewal succeeds. The renewed certificate is valid through 2026-12-26 and retained its server SPKI. The certbot deploy hook refreshes certificate copies and restarts coturn. Server and ISRG Root X1 SPKI pins are stored only in `/root/canary-data/secrets.env`.
