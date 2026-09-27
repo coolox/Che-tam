@@ -7,7 +7,9 @@ export function createTurnCredentials(config, nowMs = Date.now()) {
 
   const ttlSec = Number.isFinite(config.ttlSec) && config.ttlSec > 0 ? config.ttlSec : 600;
   const expiresAt = Math.floor(nowMs / 1000) + ttlSec;
-  const username = String(expiresAt);
+  // coTURN REST auth expects an expiry-prefixed username and HMAC over the
+  // complete username. The stable suffix identifies this service only.
+  const username = `${expiresAt}:hearth-canary`;
   const credential = createHmac('sha1', config.authSecret).update(username).digest('base64');
 
   return {

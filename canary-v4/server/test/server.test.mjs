@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import { createSocket } from 'node:dgram';
 import { request as httpRequest } from 'node:http';
 import { connect } from 'node:net';
@@ -8,9 +8,29 @@ import { after, before, describe, it } from 'node:test';
 import { CANARY_PATH, MAX_UPLOAD_BYTES } from '../src/config.mjs';
 import { MemoryJournalStore } from '../src/journal-store.mjs';
 import { createCanaryServer } from '../src/server.mjs';
+import { createTurnCredentials } from '../src/turn-cred.mjs';
 import { createUdpEchoServer } from '../src/udp-echo.mjs';
 
 const TEST_KEY = 'test-key';
+
+describe('TURN REST credentials', () => {
+  it('uses expiry:username and HMAC over the complete username for coturn', () => {
+    const secret = 'unit-test-turn-secret';
+    const credentials = createTurnCredentials({
+      host: 'turn.example.test',
+      authSecret: secret,
+      ttlSec: 600,
+      tcpPort: 3478,
+      tlsPort: 5349,
+    }, 1_700_000_000_000);
+
+    assert.equal(credentials.username, '1700000600:hearth-canary');
+    assert.equal(
+      credentials.credential,
+      createHmac('sha1', secret).update(credentials.username).digest('base64'),
+    );
+  });
+});
 
 describe('Canary v4 server', () => {
   let server;
