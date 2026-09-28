@@ -21,6 +21,10 @@ coverage/
 *.bak
 android/.kotlin/
 releases/
+canary-v4/android/secrets.properties
+canary-v4/android/.gradle/
+canary-v4/android/build/
+canary-v4/android/app/build/
 
 # Locally produced Android packages
 *.apk

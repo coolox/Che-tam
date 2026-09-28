@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Hearth Canary</string>
+    <string name="placeholder_title">Hearth Canary v4</string>
+    <string name="placeholder_version">Version 4.0.1</string>
+</resources>
