@@ -1,0 +1,8 @@
+# Local Android build and secret material — never commit.
+*.bak
+build/
+.gradle/
+local.properties
+secrets.properties
+*.jks
+*.apk

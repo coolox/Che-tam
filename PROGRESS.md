@@ -29,3 +29,11 @@ Status: accepted
 Date: 2026-09-28
 
 Notes: Canary v4 isolated Android bootstrap prepared under `canary-v4/android/`. Hermes independently built signed release `4.0.1` and verified it with apksigner; JVM target compatibility corrected after the first build failure. APK is a bootstrap artifact; later TASK-001d-2 steps add monitoring functionality.
+
+## TASK-001d-2a hygiene
+
+Status: accepted
+
+Date: 2026-09-28
+
+Notes: Exact tracked-artifact inventory found no `.bak`, build/cache, local properties, secrets, keystores, or APK files under `canary-v4/android/`; therefore nothing was removed from Git. Local ignore policy now excludes those artifacts. Codex backups must be written outside the repository under `/root/backups/codex/`.
