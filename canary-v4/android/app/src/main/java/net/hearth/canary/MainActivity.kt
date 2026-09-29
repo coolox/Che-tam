@@ -27,6 +27,7 @@ import net.hearth.canary.monitor.CanaryEventJournal
 import net.hearth.canary.monitor.CanaryMonitorStarter
 import net.hearth.canary.monitor.CanaryMonitorState
 import net.hearth.canary.ui.CanaryDeviceLabelStore
+import net.hearth.canary.ui.CanaryExportDeviceMetadata
 import net.hearth.canary.ui.CanaryJournalExportFormatter
 import net.hearth.canary.ui.CanaryJournalRecord
 import net.hearth.canary.ui.CanaryJournalSummaryFormatter
@@ -139,9 +140,11 @@ class MainActivity : Activity() {
         readinessItems.addView(actionButton(getString(R.string.battery_settings_button)) {
             openBatterySettings()
         })
-        readinessItems.addView(actionButton(getString(R.string.exact_alarm_settings_button)) {
-            openExactAlarmSettings()
-        })
+        if (readinessSummary.showExactAlarmSettingsButton) {
+            readinessItems.addView(actionButton(getString(R.string.exact_alarm_settings_button)) {
+                openExactAlarmSettings()
+            })
+        }
         readinessItems.addView(TextView(this).apply {
             text = getString(R.string.miui_autostart_manual_note)
             textSize = 14f
@@ -159,6 +162,7 @@ class MainActivity : Activity() {
             exportedAtUtc = exportedAt,
             appVersion = BuildConfig.VERSION_NAME,
             deviceLabel = deviceLabel,
+            deviceMetadata = exportDeviceMetadata(),
             records = allJournalRecords()
         )
         val exportDir = File(cacheDir, "journal-export").apply { mkdirs() }
@@ -183,6 +187,11 @@ class MainActivity : Activity() {
         val powerManager = getSystemService(PowerManager::class.java)
         val notificationManager = getSystemService(NotificationManager::class.java)
         val monitorState = CanaryMonitorState.snapshot(this, now)
+        val exactAlarmAllowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { alarmManager.canScheduleExactAlarms() }.getOrDefault(false)
+        } else {
+            true
+        }
         return CanaryReadinessInput(
             notificationsAllowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -190,15 +199,29 @@ class MainActivity : Activity() {
                 notificationManager.areNotificationsEnabled()
             },
             batteryOptimizationIgnored = powerManager.isIgnoringBatteryOptimizations(packageName),
-            exactAlarmAllowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                alarmManager.canScheduleExactAlarms()
-            } else {
-                true
-            },
+            exactAlarmAllowed = exactAlarmAllowed,
+            exactAlarmRemediationVisible = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !exactAlarmAllowed,
             monitorRunInProgress = monitorState.runInProgress,
             monitorScheduledRecently = monitorState.scheduledRecently
         )
     }
+
+    private fun exportDeviceMetadata(): CanaryExportDeviceMetadata =
+        CanaryExportDeviceMetadata(
+            deviceModel = normalizeMetadataValue("${Build.MANUFACTURER} ${Build.MODEL}"),
+            androidVersion = normalizeMetadataValue("${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"),
+            miuiVersion = normalizeMetadataValue(readSystemProperty("ro.miui.ui.version.name"))
+        )
+
+    private fun readSystemProperty(name: String): String =
+        runCatching {
+            val systemProperties = Class.forName("android.os.SystemProperties")
+            val get = systemProperties.getMethod("get", String::class.java, String::class.java)
+            get.invoke(null, name, "") as? String
+        }.getOrNull().orEmpty()
+
+    private fun normalizeMetadataValue(value: String): String =
+        value.replace(Regex("\\s+"), " ").trim()
 
     private fun valueRow(root: LinearLayout, title: String): TextView {
         root.addView(label(title))

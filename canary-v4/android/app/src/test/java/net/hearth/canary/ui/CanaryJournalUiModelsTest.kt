@@ -31,6 +31,11 @@ class CanaryJournalUiModelsTest {
             exportedAtUtc = 1_800_000_000_000L,
             appVersion = "4.0.1",
             deviceLabel = "local-1",
+            deviceMetadata = CanaryExportDeviceMetadata(
+                deviceModel = "Google Pixel",
+                androidVersion = "15 (SDK 35)",
+                miuiVersion = ""
+            ),
             records = listOf(record(1_800_000_000_000L, "summary", "ok"))
         )
         val json = JSONObject(export)
@@ -39,6 +44,9 @@ class CanaryJournalUiModelsTest {
         assertEquals("2027-01-15T08:00:00Z", json.getString("exportedAtUtc"))
         assertEquals("4.0.1", json.getString("appVersion"))
         assertEquals("local-1", json.getString("deviceLabel"))
+        assertEquals("Google Pixel", json.getString("deviceModel"))
+        assertEquals("15 (SDK 35)", json.getString("androidVersion"))
+        assertEquals("", json.getString("miuiVersion"))
         assertEquals("summary", json.getJSONArray("records").getJSONObject(0).getString("recordId"))
     }
 

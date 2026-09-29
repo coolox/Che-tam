@@ -9,6 +9,12 @@ data class CanaryJournalRecord(
     val payloadJson: String
 )
 
+data class CanaryExportDeviceMetadata(
+    val deviceModel: String,
+    val androidVersion: String,
+    val miuiVersion: String
+)
+
 data class CanaryJournalSummary(
     val lastRunText: String,
     val lastRunVerdict: String?,
@@ -73,6 +79,7 @@ object CanaryJournalExportFormatter {
         exportedAtUtc: Long,
         appVersion: String,
         deviceLabel: String,
+        deviceMetadata: CanaryExportDeviceMetadata = CanaryExportDeviceMetadata("", "", ""),
         records: List<CanaryJournalRecord>
     ): String {
         val recordArray = JSONArray()
@@ -85,6 +92,9 @@ object CanaryJournalExportFormatter {
             .put("exportedAtUtc", Instant.ofEpochMilli(exportedAtUtc).toString())
             .put("appVersion", appVersion)
             .put("deviceLabel", deviceLabel)
+            .put("deviceModel", deviceMetadata.deviceModel)
+            .put("androidVersion", deviceMetadata.androidVersion)
+            .put("miuiVersion", deviceMetadata.miuiVersion)
             .put("records", recordArray)
             .toString(2)
     }

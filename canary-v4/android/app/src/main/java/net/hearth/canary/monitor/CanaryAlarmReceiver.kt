@@ -8,15 +8,21 @@ class CanaryAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != ACTION_WATCHDOG) return
 
-        val scheduledAt = intent.getLongExtra(
-            CanaryMonitorService.EXTRA_SCHEDULED_AT,
-            CanarySchedule.nextSlotAt(System.currentTimeMillis())
-        )
-        CanaryMonitorStarter.startService(
-            context,
-            CanaryWakeupMethod.ALARM,
-        )
-        CanaryWatchdogScheduler.scheduleNext(context, scheduledAt + CanarySchedule.SLOT_MS)
+        runCatching {
+            val scheduledAt = intent.getLongExtra(
+                CanaryMonitorService.EXTRA_SCHEDULED_AT,
+                CanarySchedule.nextSlotAt(System.currentTimeMillis())
+            )
+            runCatching {
+                CanaryMonitorStarter.startService(
+                    context,
+                    CanaryWakeupMethod.ALARM,
+                )
+            }.onFailure { CanaryCycleErrorReporter.append(context, "alarm_receiver_start_service", it) }
+            CanaryWatchdogScheduler.scheduleNext(context, scheduledAt + CanarySchedule.SLOT_MS)
+        }.onFailure {
+            CanaryCycleErrorReporter.append(context, "alarm_receiver_dispatch", it)
+        }
     }
 
     companion object {

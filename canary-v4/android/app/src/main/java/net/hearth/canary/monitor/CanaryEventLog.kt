@@ -94,10 +94,33 @@ class CanaryEventLog(context: Context) {
         )
     }
 
+    @Synchronized
+    fun appendCycleError(phase: String, throwable: Throwable) {
+        append(cycleErrorPayload(phase, throwable))
+    }
+
     private fun append(json: JSONObject) {
         journal.append(json.toString())
     }
 }
+
+object CanaryCycleErrorReporter {
+    fun append(context: Context, phase: String, throwable: Throwable) {
+        runCatching {
+            CanaryEventLog(context.applicationContext).appendCycleError(phase, throwable)
+        }
+    }
+}
+
+fun cycleErrorPayload(phase: String, throwable: Throwable): JSONObject =
+    JSONObject()
+        .put("recordId", UUID.randomUUID().toString())
+        .put("timestampUtc", System.currentTimeMillis())
+        .put("testType", "cycle_error")
+        .put("phase", phase)
+        .put("exceptionClass", throwable.javaClass.name)
+        .putNullable("message", throwable.message)
+        .put("stack", throwable.stackTraceToString().lineSequence().take(MAX_CYCLE_ERROR_STACK_LINES).joinToString("\n"))
 
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
     put(name, value ?: JSONObject.NULL)
@@ -125,3 +148,5 @@ data class CycleStartFields(
     val wifiRssi: Int?,
     val wifiLinkMbps: Int?
 )
+
+private const val MAX_CYCLE_ERROR_STACK_LINES = 20

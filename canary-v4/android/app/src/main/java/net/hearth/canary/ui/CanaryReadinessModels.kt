@@ -4,6 +4,7 @@ data class CanaryReadinessInput(
     val notificationsAllowed: Boolean,
     val batteryOptimizationIgnored: Boolean,
     val exactAlarmAllowed: Boolean,
+    val exactAlarmRemediationVisible: Boolean,
     val monitorRunInProgress: Boolean,
     val monitorScheduledRecently: Boolean
 )
@@ -17,6 +18,7 @@ data class CanaryReadinessItem(
 data class CanaryReadinessSummary(
     val allProgrammaticChecksOk: Boolean,
     val statusText: String,
+    val showExactAlarmSettingsButton: Boolean,
     val items: List<CanaryReadinessItem>
 )
 
@@ -52,6 +54,7 @@ object CanaryReadinessFormatter {
         return CanaryReadinessSummary(
             allProgrammaticChecksOk = allOk,
             statusText = if (allOk) "всё в порядке" else "требует внимания",
+            showExactAlarmSettingsButton = input.exactAlarmRemediationVisible,
             items = items
         )
     }

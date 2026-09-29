@@ -2,6 +2,7 @@ package net.hearth.canary.monitor
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CanaryEventJournalTest {
@@ -35,6 +36,23 @@ class CanaryEventJournalTest {
         assertEquals(listOf("first", "second"), journal.oldestFirst(10).map { it.recordId })
         assertEquals("run_summary", JSONObject(journal.newestFirst(1).single().payloadJson).getString("testType"))
         assertEquals(2, journal.count())
+    }
+
+    @Test
+    fun cycleErrorPayloadContainsThrowableFieldsAndTruncatesStack() {
+        val throwable = IllegalStateException("boom")
+        throwable.stackTrace = (1..25).map {
+            StackTraceElement("Class$it", "method$it", "File$it.kt", it)
+        }.toTypedArray()
+
+        val payload = cycleErrorPayload("watchdog_set_alarm_clock", throwable)
+
+        assertEquals("cycle_error", payload.getString("testType"))
+        assertEquals("watchdog_set_alarm_clock", payload.getString("phase"))
+        assertEquals(IllegalStateException::class.java.name, payload.getString("exceptionClass"))
+        assertEquals("boom", payload.getString("message"))
+        assertEquals(20, payload.getString("stack").lineSequence().count())
+        assertTrue(payload.getString("stack").contains("Class19"))
     }
 
     private fun payload(recordId: String, testType: String): String =
