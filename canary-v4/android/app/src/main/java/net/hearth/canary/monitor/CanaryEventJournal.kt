@@ -30,6 +30,9 @@ class CanaryEventJournal(
     fun oldestFirst(limit: Int): List<CanaryEventEntity> =
         dao.oldestFirst(limit.coerceAtLeast(0))
 
+    fun since(sinceUtc: Long): List<CanaryEventEntity> =
+        dao.since(sinceUtc)
+
     private fun payloadJsonRecordId(payloadJson: String): String =
         org.json.JSONObject(payloadJson).getString("recordId")
 

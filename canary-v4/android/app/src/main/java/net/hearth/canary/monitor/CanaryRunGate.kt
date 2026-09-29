@@ -7,6 +7,8 @@ object CanaryRunGate {
 
     fun tryEnter(): Boolean = running.compareAndSet(false, true)
 
+    fun isRunning(): Boolean = running.get()
+
     fun leave() {
         running.set(false)
     }

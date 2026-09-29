@@ -24,4 +24,7 @@ interface CanaryEventDao {
 
     @Query("SELECT * FROM canary_event_journal ORDER BY sequence ASC LIMIT :limit")
     fun oldestFirst(limit: Int): List<CanaryEventEntity>
+
+    @Query("SELECT * FROM canary_event_journal WHERE timestamp_utc >= :sinceUtc ORDER BY sequence ASC")
+    fun since(sinceUtc: Long): List<CanaryEventEntity>
 }

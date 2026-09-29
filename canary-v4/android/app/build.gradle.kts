@@ -122,6 +122,7 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core:1.13.1")
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     ksp("androidx.room:room-compiler:2.6.1")

@@ -78,4 +78,7 @@ private class FakeCanaryEventDao : CanaryEventDao {
 
     override fun oldestFirst(limit: Int): List<CanaryEventEntity> =
         events.sortedBy { it.sequence }.take(limit)
+
+    override fun since(sinceUtc: Long): List<CanaryEventEntity> =
+        events.filter { it.timestampUtc >= sinceUtc }.sortedBy { it.sequence }
 }

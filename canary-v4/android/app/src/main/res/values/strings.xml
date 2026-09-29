@@ -1,10 +1,26 @@
 <resources>
     <string name="app_name">Hearth Canary</string>
-    <string name="placeholder_title">Hearth Canary v4</string>
-    <string name="placeholder_version">Version 4.0.1</string>
     <string name="monitor_notification_channel">Canary monitor</string>
     <string name="monitor_notification_title">Hearth Canary monitor</string>
     <string name="monitor_notification_text">Background connectivity checks are scheduled.</string>
-    <string name="monitor_start_button">Start monitor</string>
     <string name="monitor_special_use_subtype">Runs low-frequency family connectivity diagnostics every 15 minutes with a visible persistent notification.</string>
+    <string name="main_title">Hearth Canary v4</string>
+    <string name="main_subtitle">Локальный статус канарейки</string>
+    <string name="device_label_title">Метка устройства</string>
+    <string name="device_label_hint">local-1</string>
+    <string name="device_label_content_description">Метка устройства для журнала</string>
+    <string name="device_label_save_button">Сохранить метку</string>
+    <string name="last_run_title">Последний прогон</string>
+    <string name="day_summary_title">За 24 часа</string>
+    <string name="app_version_title">Версия приложения</string>
+    <string name="readiness_title">Готовность</string>
+    <string name="check_now_button">Проверить сейчас</string>
+    <string name="export_journal_button">Отправить журнал</string>
+    <string name="readiness_button">Готовность</string>
+    <string name="notification_settings_button">Настройки уведомлений</string>
+    <string name="battery_settings_button">Настройки батареи</string>
+    <string name="exact_alarm_settings_button">Настройки точных будильников</string>
+    <string name="miui_autostart_button">Открыть автозапуск MIUI</string>
+    <string name="miui_autostart_manual_note">Автозапуск MIUI программно не проверяется. Откройте Security Center и включите его вручную; при ошибке откроются настройки приложения.</string>
+    <string name="export_journal_chooser_title">Отправить журнал</string>
 </resources>

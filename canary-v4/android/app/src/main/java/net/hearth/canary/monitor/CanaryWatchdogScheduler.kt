@@ -23,6 +23,7 @@ object CanaryWatchdogScheduler {
             AlarmManager.AlarmClockInfo(triggerAt, pendingIntent),
             pendingIntent
         )
+        CanaryMonitorState.markWatchdogScheduled(context, expectedCycleAtMs, triggerAt)
     }
 
     private const val REQUEST_CODE = 4015
