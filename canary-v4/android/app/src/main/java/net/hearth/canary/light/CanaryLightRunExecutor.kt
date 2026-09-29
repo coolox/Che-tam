@@ -5,6 +5,7 @@ import net.hearth.canary.BuildConfig
 import okhttp3.Call
 import okhttp3.CertificatePinner
 import okhttp3.EventListener
+import okhttp3.Handshake
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -15,7 +16,6 @@ import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
-import javax.net.ssl.Handshake
 
 class CanaryLightRunExecutor(
     context: Context,

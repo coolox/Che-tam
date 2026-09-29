@@ -86,7 +86,7 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
-            .pingInterval(5, TimeUnit.SECONDS)
+            .pingInterval(0, TimeUnit.SECONDS)
         if (pins.isNotEmpty()) {
             val pinner = CertificatePinner.Builder().apply {
                 pins.forEach { pin ->
