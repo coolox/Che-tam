@@ -164,7 +164,7 @@ class MainActivity : Activity() {
         val exportDir = File(cacheDir, "journal-export").apply { mkdirs() }
         val exportFile = File(exportDir, "hearth-canary-journal-v4-$exportedAt.json")
         exportFile.writeText(exportJson, Charsets.UTF_8)
-        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", exportFile)
+        val uri = FileProvider.getUriForFile(this, "${BuildConfig.APPLICATION_ID}.fileprovider", exportFile)
         val sendIntent = Intent(Intent.ACTION_SEND)
             .setType("application/json")
             .putExtra(Intent.EXTRA_STREAM, uri)

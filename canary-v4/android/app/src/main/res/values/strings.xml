@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">Hearth Canary</string>
+    <string name="app_name">Hearth Canary v4</string>
     <string name="monitor_notification_channel">Canary monitor</string>
     <string name="monitor_notification_title">Hearth Canary monitor</string>
     <string name="monitor_notification_text">Background connectivity checks are scheduled.</string>
