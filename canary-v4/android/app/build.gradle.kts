@@ -8,9 +8,15 @@ plugins {
 val releaseSigningPropertiesFile = file("/root/canary-data/signing/canary-v4-release.properties")
 val releaseSigningProperties = Properties()
 val hasReleaseSigningProperties = releaseSigningPropertiesFile.isFile
+val localSecretsFile = rootProject.file("secrets.properties")
+val localSecrets = Properties()
 
 if (hasReleaseSigningProperties) {
     releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+}
+
+if (localSecretsFile.isFile) {
+    localSecretsFile.inputStream().use(localSecrets::load)
 }
 
 fun releaseSigningProperty(name: String): String =
@@ -18,6 +24,12 @@ fun releaseSigningProperty(name: String): String =
         ?: throw GradleException(
             "Release signing configuration is incomplete: missing '$name' in /root/canary-data/signing/canary-v4-release.properties."
         )
+
+fun localSecretProperty(vararg names: String): String =
+    names.firstNotNullOfOrNull { localSecrets.getProperty(it)?.takeIf(String::isNotBlank) }.orEmpty()
+
+fun buildConfigString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 gradle.taskGraph.whenReady {
     val requestsReleaseOutput = allTasks.any { task ->
@@ -52,6 +64,23 @@ android {
         jvmTarget = "17"
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    buildTypes.configureEach {
+        buildConfigField(
+            "String",
+            "CANARY_TLS_PIN_SHA256_1",
+            buildConfigString(localSecretProperty("canary.tlsPinSha256.1", "CANARY_TLS_PIN_SHA256_1"))
+        )
+        buildConfigField(
+            "String",
+            "CANARY_TLS_PIN_SHA256_2",
+            buildConfigString(localSecretProperty("canary.tlsPinSha256.2", "CANARY_TLS_PIN_SHA256_2"))
+        )
+    }
+
     signingConfigs {
         create("release") {
             if (hasReleaseSigningProperties) {
@@ -77,5 +106,6 @@ android {
 }
 
 dependencies {
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
 }

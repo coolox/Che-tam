@@ -12,10 +12,14 @@ import android.os.IBinder
 import android.os.Looper
 import net.hearth.canary.MainActivity
 import net.hearth.canary.R
+import net.hearth.canary.light.CanaryLightRunExecutor
+import net.hearth.canary.light.CanaryRunVerdictDeriver
+import java.util.UUID
 
 class CanaryMonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var eventLog: CanaryEventLog
+    private lateinit var lightRunExecutor: CanaryLightRunExecutor
 
     private val cadenceRunnable = object : Runnable {
         override fun run() {
@@ -27,6 +31,7 @@ class CanaryMonitorService : Service() {
     override fun onCreate() {
         super.onCreate()
         eventLog = CanaryEventLog(this)
+        lightRunExecutor = CanaryLightRunExecutor(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, persistentNotification())
         scheduleServiceCadence()
@@ -69,6 +74,12 @@ class CanaryMonitorService : Service() {
             CanaryRunResources(this).use {
                 it.acquire()
                 eventLog.appendCycleStart(fields)
+                val runId = UUID.randomUUID().toString()
+                val results = lightRunExecutor.run()
+                results.forEach { result ->
+                    eventLog.appendLightRunRecord(runId, result)
+                }
+                eventLog.appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(results))
             }
         } finally {
             CanaryRunGate.leave()
