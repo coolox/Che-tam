@@ -5,11 +5,12 @@ import net.hearth.canary.light.CanaryPhases
 import net.hearth.canary.light.CanaryRunSummary
 import net.hearth.canary.light.CanaryTestResult
 import org.json.JSONObject
-import java.io.File
 import java.util.UUID
 
 class CanaryEventLog(context: Context) {
-    private val file = File(context.filesDir, FILE_NAME)
+    private val journal = CanaryEventJournal(CanaryEventDatabase.get(context).eventDao()).also {
+        it.prune()
+    }
 
     @Synchronized
     fun appendCycleStart(fields: CycleStartFields) {
@@ -94,12 +95,7 @@ class CanaryEventLog(context: Context) {
     }
 
     private fun append(json: JSONObject) {
-        file.parentFile?.mkdirs()
-        file.appendText(json.toString() + "\n")
-    }
-
-    companion object {
-        private const val FILE_NAME = "canary-cycle-events.jsonl"
+        journal.append(json.toString())
     }
 }
 
