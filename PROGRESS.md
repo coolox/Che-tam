@@ -45,3 +45,11 @@ Status: accepted
 Date: 2026-09-28
 
 Notes: Background special-use foreground monitor, persistent notification, 15-minute service cadence, setAlarmClock watchdog (+2 minutes), boot/package receivers, bounded run locks, collision records, cycle-start snapshot and schedule unit tests implemented. Hermes independently ran release unit tests and signed release assembly successfully.
+
+## TASK-001d-2
+
+Status: implemented-awaiting-24h-verification
+
+Date: 2026-09-29
+
+Notes: Steps C–E are implemented: light network run with pinned TLS and echo-only WebSocket keepalive; Room-backed local 30-day journal; native status/readiness screen and manual FileProvider journal export. Hermes independently ran `testReleaseUnitTest` (22 passed, 0 failed) and `assembleRelease` successfully. The signed 4.0.1 APK awaits the required 24-hour owner-device verification before acceptance.
