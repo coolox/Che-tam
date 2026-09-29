@@ -37,3 +37,11 @@ Status: accepted
 Date: 2026-09-28
 
 Notes: Exact tracked-artifact inventory found no `.bak`, build/cache, local properties, secrets, keystores, or APK files under `canary-v4/android/`; therefore nothing was removed from Git. Local ignore policy now excludes those artifacts. Codex backups must be written outside the repository under `/root/backups/codex/`.
+
+## TASK-001d-2B
+
+Status: accepted
+
+Date: 2026-09-28
+
+Notes: Background special-use foreground monitor, persistent notification, 15-minute service cadence, setAlarmClock watchdog (+2 minutes), boot/package receivers, bounded run locks, collision records, cycle-start snapshot and schedule unit tests implemented. Hermes independently ran release unit tests and signed release assembly successfully.

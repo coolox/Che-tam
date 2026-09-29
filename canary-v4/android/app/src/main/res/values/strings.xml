@@ -2,4 +2,9 @@
     <string name="app_name">Hearth Canary</string>
     <string name="placeholder_title">Hearth Canary v4</string>
     <string name="placeholder_version">Version 4.0.1</string>
+    <string name="monitor_notification_channel">Canary monitor</string>
+    <string name="monitor_notification_title">Hearth Canary monitor</string>
+    <string name="monitor_notification_text">Background connectivity checks are scheduled.</string>
+    <string name="monitor_start_button">Start monitor</string>
+    <string name="monitor_special_use_subtype">Runs low-frequency family connectivity diagnostics every 15 minutes with a visible persistent notification.</string>
 </resources>

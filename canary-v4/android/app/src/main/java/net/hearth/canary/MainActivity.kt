@@ -4,8 +4,10 @@ import android.app.Activity
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
+import net.hearth.canary.monitor.CanaryMonitorStarter
 
 class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -34,8 +36,16 @@ class MainActivity : Activity() {
             setPadding(0, 16, 0, 0)
         }
 
+        val startMonitor = Button(this).apply {
+            text = getString(R.string.monitor_start_button)
+            setOnClickListener {
+                CanaryMonitorStarter.startFromManual(this@MainActivity)
+            }
+        }
+
         container.addView(title)
         container.addView(version)
+        container.addView(startMonitor)
         setContentView(container)
     }
 }
