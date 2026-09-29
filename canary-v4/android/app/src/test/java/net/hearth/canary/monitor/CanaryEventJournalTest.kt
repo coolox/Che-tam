@@ -3,6 +3,7 @@ package net.hearth.canary.monitor
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Test
 
 class CanaryEventJournalTest {
@@ -53,6 +54,60 @@ class CanaryEventJournalTest {
         assertEquals("boom", payload.getString("message"))
         assertEquals(20, payload.getString("stack").lineSequence().count())
         assertTrue(payload.getString("stack").contains("Class19"))
+    }
+
+    @Test
+    fun cycleStartPayloadIncludesRunCorrelationAndNetworkFields() {
+        val payload = cycleStartPayload(
+            CycleStartFields(
+                runId = "run-1",
+                timestampUtc = 1_800_000_000_000L,
+                wakeupMethod = "service",
+                scheduledAt = 1_799_999_999_000L,
+                delayMs = 1_000L,
+                missedSinceLast = 0,
+                batteryPct = 80,
+                isCharging = true,
+                batteryOptimizationIgnored = true,
+                exactAlarmAllowed = true,
+                notificationsAllowed = true,
+                uptimeSec = 100L,
+                processStartedAt = 1_799_999_900_000L,
+                networkType = "wifi",
+                wifiRssi = -55,
+                wifiLinkMbps = 144
+            )
+        )
+
+        assertEquals("cycle_start", payload.getString("testType"))
+        assertEquals("run-1", payload.getString("runId"))
+        assertEquals(1_800_000_000_000L, payload.getLong("timestampUtc"))
+        assertEquals("wifi", payload.getString("networkType"))
+        assertEquals(-55, payload.getInt("wifiRssi"))
+        assertEquals(144, payload.getInt("wifiLinkMbps"))
+    }
+
+    @Test
+    fun lightRunPayloadSerializesResolvedAddressesAsJsonArray() {
+        val payload = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "dns_resolve",
+                target = "example.test",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                resolvedAddresses = listOf("203.0.113.1", "2001:db8::1"),
+                bytesTx = 12L,
+                bytesRx = 34L
+            )
+        )
+
+        val addresses = payload.get("resolvedAddresses")
+        assertSame(org.json.JSONArray::class.java, addresses.javaClass)
+        assertEquals("203.0.113.1", payload.getJSONArray("resolvedAddresses").getString(0))
+        assertEquals("2001:db8::1", payload.getJSONArray("resolvedAddresses").getString(1))
+        assertEquals(12L, payload.getLong("bytesTx"))
+        assertEquals(34L, payload.getLong("bytesRx"))
     }
 
     private fun payload(recordId: String, testType: String): String =

@@ -7,7 +7,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.net.wifi.WifiManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiInfo
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
@@ -21,7 +23,9 @@ object CanarySystemSnapshot {
         context: Context,
         wakeupMethod: String,
         scheduledAt: Long,
-        previousScheduledAt: Long?
+        previousScheduledAt: Long?,
+        runId: String,
+        timestampUtc: Long
     ): CycleStartFields {
         val now = System.currentTimeMillis()
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
@@ -32,10 +36,11 @@ object CanarySystemSnapshot {
         val powerManager = context.getSystemService(PowerManager::class.java)
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         val notificationManager = context.getSystemService(NotificationManager::class.java)
-        val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
-        val wifiInfo = wifiManager?.connectionInfo
+        val networkSnapshot = collectNetworkSnapshot(context)
 
         return CycleStartFields(
+            runId = runId,
+            timestampUtc = timestampUtc,
             wakeupMethod = wakeupMethod,
             scheduledAt = scheduledAt,
             delayMs = (now - scheduledAt).coerceAtLeast(0L),
@@ -61,8 +66,43 @@ object CanarySystemSnapshot {
             },
             uptimeSec = SystemClock.elapsedRealtime() / 1000L,
             processStartedAt = processStartedAt,
+            networkType = networkSnapshot.networkType,
+            wifiRssi = networkSnapshot.wifiRssi,
+            wifiLinkMbps = networkSnapshot.wifiLinkMbps
+        )
+    }
+
+    private fun collectNetworkSnapshot(context: Context): NetworkSnapshot {
+        val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
+            ?: return NetworkSnapshot(networkType = "unknown")
+        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+            ?: return NetworkSnapshot(networkType = "unknown")
+
+        val networkType = when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+            else -> "other"
+        }
+        val wifiInfo = if (
+            networkType == "wifi" &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            capabilities.transportInfo is WifiInfo
+        ) {
+            capabilities.transportInfo as WifiInfo
+        } else {
+            null
+        }
+
+        return NetworkSnapshot(
+            networkType = networkType,
             wifiRssi = wifiInfo?.rssi,
             wifiLinkMbps = wifiInfo?.linkSpeed
         )
     }
+
+    private data class NetworkSnapshot(
+        val networkType: String,
+        val wifiRssi: Int? = null,
+        val wifiLinkMbps: Int? = null
+    )
 }

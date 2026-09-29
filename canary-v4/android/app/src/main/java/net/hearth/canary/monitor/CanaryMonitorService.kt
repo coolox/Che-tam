@@ -15,9 +15,14 @@ import net.hearth.canary.R
 import net.hearth.canary.light.CanaryLightRunExecutor
 import net.hearth.canary.light.CanaryRunVerdictDeriver
 import java.util.UUID
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 class CanaryMonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
+    private val cycleExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "canary-light-run").apply { isDaemon = false }
+    }
     private var eventLog: CanaryEventLog? = null
     private var lightRunExecutor: CanaryLightRunExecutor? = null
 
@@ -76,6 +81,7 @@ class CanaryMonitorService : Service() {
         protect("service_on_destroy") {
             handler.removeCallbacks(cadenceRunnable)
             scheduleWatchdog(CanarySchedule.nextSlotAt(System.currentTimeMillis()))
+            cycleExecutor.shutdown()
         }
         runCatching { super.onDestroy() }
             .onFailure { appendCycleError("service_on_destroy_super", it) }
@@ -97,7 +103,27 @@ class CanaryMonitorService : Service() {
         }
 
         val nextScheduledAt = scheduledAt + CanarySchedule.SLOT_MS
+        val runId = UUID.randomUUID().toString()
+        val cycleTimestampUtc = System.currentTimeMillis()
 
+        try {
+            cycleExecutor.execute {
+                runCycleInBackground(wakeupMethod, scheduledAt, nextScheduledAt, runId, cycleTimestampUtc)
+            }
+        } catch (throwable: Throwable) {
+            appendCycleError("run_cycle_dispatch", throwable)
+            runCatching { CanaryRunGate.leave() }
+                .onFailure { appendCycleError("run_gate_leave", it) }
+        }
+    }
+
+    private fun runCycleInBackground(
+        wakeupMethod: String,
+        scheduledAt: Long,
+        nextScheduledAt: Long,
+        runId: String,
+        cycleTimestampUtc: Long
+    ) {
         try {
             val previousScheduledAt = runCatching { lastScheduledAt() }
                 .onFailure { appendCycleError("run_last_scheduled_at", it) }
@@ -105,7 +131,14 @@ class CanaryMonitorService : Service() {
             runCatching { setLastScheduledAt(scheduledAt) }
                 .onFailure { appendCycleError("run_set_last_scheduled_at", it) }
             val fields = runCatching {
-                CanarySystemSnapshot.collect(this, wakeupMethod, scheduledAt, previousScheduledAt)
+                CanarySystemSnapshot.collect(
+                    this,
+                    wakeupMethod,
+                    scheduledAt,
+                    previousScheduledAt,
+                    runId,
+                    cycleTimestampUtc
+                )
             }.onFailure {
                 appendCycleError("run_system_snapshot", it)
             }.getOrNull()
@@ -117,7 +150,6 @@ class CanaryMonitorService : Service() {
                 if (fields != null) {
                     appendCycleStart(fields)
                 }
-                val runId = UUID.randomUUID().toString()
                 val results = requireNotNull(lightRunExecutor) { "Light run executor is not initialized" }.run()
                 results.forEach { result ->
                     appendLightRunRecord(runId, result)

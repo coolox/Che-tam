@@ -1,6 +1,9 @@
 package net.hearth.canary.light
 
 import android.content.Context
+import android.net.TrafficStats
+import android.os.Looper
+import android.os.Process
 import net.hearth.canary.BuildConfig
 import okhttp3.Call
 import okhttp3.CertificatePinner
@@ -31,15 +34,26 @@ class CanaryLightRunExecutor(
         .build()
 
     fun run(): List<CanaryTestResult> {
+        CanaryLightRunThreadGuard.assertNotMainThread()
         val results = mutableListOf<CanaryTestResult>()
         CONTROL_HTTP_TARGETS.forEach { target ->
-            results += executeHttp("control_http", target, "https://$target/", "HEAD", baseClient)
+            results += measuredTraffic {
+                executeHttp("control_http", target, "https://$target/", "HEAD", baseClient)
+            }
         }
-        results += resolveDns("control_dns", CONTROL_DNS_TARGET)
-        results += resolveDns("dns_resolve", SERVER_HOST)
-        results += executeHttp("http_domain", SERVER_HOST, SERVER_HTTP_URL, "GET", pinnedClient())
-        results += webSocketKeeper.checkKeepalive()
+        results += measuredTraffic { resolveDns("control_dns", CONTROL_DNS_TARGET) }
+        results += measuredTraffic { resolveDns("dns_resolve", SERVER_HOST) }
+        results += measuredTraffic { executeHttp("http_domain", SERVER_HOST, SERVER_HTTP_URL, "GET", pinnedClient()) }
+        results += measuredTraffic { webSocketKeeper.checkKeepalive() }
         return results
+    }
+
+    private fun measuredTraffic(block: () -> CanaryTestResult): CanaryTestResult {
+        val before = CanaryTrafficSampler.sample()
+        val result = block()
+        val after = CanaryTrafficSampler.sample()
+        val delta = CanaryTrafficDeltaCalculator.delta(before, after)
+        return result.copy(bytesTx = delta?.bytesTx, bytesRx = delta?.bytesRx)
     }
 
     private fun executeHttp(
@@ -216,4 +230,51 @@ class CanaryLightRunExecutor(
             "www.cloudflare.com"
         )
     }
+}
+
+object CanaryLightRunThreadGuard {
+    fun assertNotMainThread(
+        currentThread: Thread = Thread.currentThread(),
+        mainThread: Thread? = androidMainThread()
+    ) {
+        check(mainThread == null || currentThread !== mainThread) {
+            "Canary light run must not execute on Android main thread."
+        }
+    }
+
+    private fun androidMainThread(): Thread? =
+        runCatching { Looper.getMainLooper().thread }.getOrNull()
+}
+
+data class CanaryTrafficSample(
+    val bytesTx: Long?,
+    val bytesRx: Long?
+)
+
+object CanaryTrafficDeltaCalculator {
+    fun delta(before: CanaryTrafficSample, after: CanaryTrafficSample): CanaryTrafficSample? {
+        val tx = nonNegativeDelta(before.bytesTx, after.bytesTx)
+        val rx = nonNegativeDelta(before.bytesRx, after.bytesRx)
+        return if (tx == null && rx == null) null else CanaryTrafficSample(tx, rx)
+    }
+
+    private fun nonNegativeDelta(before: Long?, after: Long?): Long? {
+        if (before == null || after == null) return null
+        val delta = after - before
+        return if (delta >= 0L) delta else null
+    }
+}
+
+private object CanaryTrafficSampler {
+    fun sample(): CanaryTrafficSample =
+        runCatching {
+            val uid = Process.myUid()
+            CanaryTrafficSample(
+                bytesTx = TrafficStats.getUidTxBytes(uid).takeIfAvailable(),
+                bytesRx = TrafficStats.getUidRxBytes(uid).takeIfAvailable()
+            )
+        }.getOrDefault(CanaryTrafficSample(bytesTx = null, bytesRx = null))
+
+    private fun Long.takeIfAvailable(): Long? =
+        takeIf { it >= 0L }
 }
