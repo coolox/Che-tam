@@ -11,6 +11,7 @@
     <string name="device_label_content_description">Метка устройства для журнала</string>
     <string name="device_label_save_button">Сохранить метку</string>
     <string name="last_run_title">Последний прогон</string>
+    <string name="last_full_run_title">Последний полный прогон</string>
     <string name="day_summary_title">За 24 часа</string>
     <string name="app_version_title">Версия приложения</string>
     <string name="readiness_title">Готовность</string>

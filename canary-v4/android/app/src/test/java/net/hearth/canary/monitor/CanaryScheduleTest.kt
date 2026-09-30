@@ -1,5 +1,7 @@
 package net.hearth.canary.monitor
 
+import net.hearth.canary.full.CanaryRunKind
+import net.hearth.canary.full.CanaryRunPlanner
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -39,5 +41,37 @@ class CanaryScheduleTest {
         val slot = CanarySchedule.SLOT_MS
 
         assertEquals(1, CanarySchedule.missedSinceLast(slot + 1L, slot * 3 + 1L))
+    }
+
+    @Test
+    fun plannerSelectsExactlyTwoFullRunsAcrossEightFifteenMinuteUtcSlots() {
+        val start = 3_600_000L
+        val kinds = (0 until 8).map { slot ->
+            CanaryRunPlanner.kindForSlot(start + slot * CanarySchedule.SLOT_MS)
+        }
+
+        assertEquals(2, kinds.count { it == CanaryRunKind.FULL })
+        assertEquals(6, kinds.count { it == CanaryRunKind.LIGHT })
+        assertEquals(
+            listOf(
+                CanaryRunKind.FULL,
+                CanaryRunKind.LIGHT,
+                CanaryRunKind.LIGHT,
+                CanaryRunKind.LIGHT,
+                CanaryRunKind.FULL,
+                CanaryRunKind.LIGHT,
+                CanaryRunKind.LIGHT,
+                CanaryRunKind.LIGHT
+            ),
+            kinds
+        )
+    }
+
+    @Test
+    fun manualFullWakeupSelectsFullOutsideHourlySchedule() {
+        assertEquals(
+            CanaryRunKind.FULL,
+            CanaryRunPlanner.kindForWakeup(CanaryWakeupMethod.MANUAL_FULL, 3_600_000L + CanarySchedule.SLOT_MS)
+        )
     }
 }

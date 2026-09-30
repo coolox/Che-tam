@@ -74,6 +74,9 @@ class CanaryMonitorService : Service() {
         protect("service_on_create_watchdog") {
             scheduleWatchdog(CanarySchedule.nextSlotAt(System.currentTimeMillis()))
         }
+        protect("service_on_create_pending_manual_full") {
+            drainPendingManualFull()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -106,16 +109,28 @@ class CanaryMonitorService : Service() {
 
     private fun runCycle(wakeupMethod: String, scheduledAt: Long) {
         val now = System.currentTimeMillis()
-        val entered = runCatching { CanaryRunGate.tryEnter() }
+        val runId = UUID.randomUUID().toString()
+        val entered = runCatching { CanaryRunGate.tryEnter(runId) }
             .onFailure { appendCycleError("run_gate_enter", it) }
             .getOrDefault(false)
         if (!entered) {
-            appendCycleSkipped(wakeupMethod, scheduledAt, (now - scheduledAt).coerceAtLeast(0L))
+            val queueDecision = CanaryManualFullQueue.onGateBusy(wakeupMethod, hasPendingManualFull())
+            setPendingManualFull(queueDecision.pendingAfter)
+            if (queueDecision.writeSkipped) {
+                appendCycleSkipped(
+                    wakeupMethod = wakeupMethod,
+                    scheduledAt = scheduledAt,
+                    delayMs = (now - scheduledAt).coerceAtLeast(0L),
+                    reason = CYCLE_SKIP_REASON_OVERLAP,
+                    requestedKind = requestedKind(wakeupMethod, scheduledAt),
+                    currentRunId = CanaryRunGate.currentRunId(),
+                    queued = queueDecision.queued
+                )
+            }
             return
         }
 
         val nextScheduledAt = scheduledAt + CanarySchedule.SLOT_MS
-        val runId = UUID.randomUUID().toString()
         val cycleTimestampUtc = System.currentTimeMillis()
 
         try {
@@ -169,7 +184,8 @@ class CanaryMonitorService : Service() {
                 lightResults.forEach { result ->
                     appendLightRunRecord(runId, result)
                 }
-                if (shouldRunFull(wakeupMethod, scheduledAt)) {
+                val requestedRunKind = CanaryRunPlanner.kindForWakeup(wakeupMethod, scheduledAt)
+                if (requestedRunKind == CanaryRunKind.FULL) {
                     val budget = requireNotNull(trafficBudget) { "Traffic budget is not initialized" }
                     if (budget.canRunHeavy()) {
                         val nightlyDecision = shouldAttemptNightlyJournalUpload(System.currentTimeMillis())
@@ -214,7 +230,20 @@ class CanaryMonitorService : Service() {
                                 )
                             )
                         }
-                        appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(lightResults, lightRun.traffic))
+                        appendCycleSkipped(
+                            wakeupMethod = wakeupMethod,
+                            scheduledAt = scheduledAt,
+                            delayMs = (System.currentTimeMillis() - scheduledAt).coerceAtLeast(0L),
+                            reason = CYCLE_SKIP_REASON_BUDGET,
+                            requestedKind = requestedKind(wakeupMethod, scheduledAt),
+                            currentRunId = runId,
+                            queued = false
+                        )
+                        appendRunSummary(
+                            runId,
+                            CanaryRunVerdictDeriver.deriveLight(lightResults, lightRun.traffic),
+                            CanaryRunKind.FULL.wireValue
+                        )
                     }
                 } else {
                     appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(lightResults, lightRun.traffic))
@@ -232,6 +261,9 @@ class CanaryMonitorService : Service() {
                 .onFailure { appendCycleError("run_gate_leave", it) }
             protect("run_cycle_watchdog_reschedule") {
                 scheduleWatchdog(nextScheduledAt)
+            }
+            protect("run_cycle_pending_manual_full") {
+                drainPendingManualFull()
             }
         }
     }
@@ -253,8 +285,26 @@ class CanaryMonitorService : Service() {
             .onFailure { appendCycleError("journal_cycle_start", it) }
     }
 
-    private fun appendCycleSkipped(wakeupMethod: String, scheduledAt: Long, delayMs: Long) {
-        runCatching { ensureEventLog().appendCycleSkipped(wakeupMethod, scheduledAt, delayMs) }
+    private fun appendCycleSkipped(
+        wakeupMethod: String,
+        scheduledAt: Long,
+        delayMs: Long,
+        reason: String,
+        requestedKind: String,
+        currentRunId: String?,
+        queued: Boolean
+    ) {
+        runCatching {
+            ensureEventLog().appendCycleSkipped(
+                wakeupMethod = wakeupMethod,
+                scheduledAt = scheduledAt,
+                delayMs = delayMs,
+                reason = reason,
+                requestedKind = requestedKind,
+                currentRunId = currentRunId,
+                queued = queued
+            )
+        }
             .onFailure { appendCycleError("journal_cycle_skipped", it) }
     }
 
@@ -273,9 +323,18 @@ class CanaryMonitorService : Service() {
             .onFailure { appendCycleError("journal_run_summary", it) }
     }
 
-    private fun shouldRunFull(wakeupMethod: String, scheduledAt: Long): Boolean =
-        wakeupMethod == CanaryWakeupMethod.MANUAL_FULL ||
-            CanaryRunPlanner.kindForSlot(scheduledAt) == CanaryRunKind.FULL
+    private fun requestedKind(wakeupMethod: String, scheduledAt: Long): String =
+        if (wakeupMethod == CanaryWakeupMethod.MANUAL_FULL) {
+            CanaryWakeupMethod.MANUAL_FULL
+        } else {
+            CanaryRunPlanner.kindForSlot(scheduledAt).wireValue
+        }
+
+    private fun drainPendingManualFull() {
+        if (!CanaryManualFullQueue.shouldDrain(hasPendingManualFull(), CanaryRunGate.isRunning())) return
+        setPendingManualFull(false)
+        runCycle(CanaryWakeupMethod.MANUAL_FULL, CanarySchedule.nextSlotAt(System.currentTimeMillis()))
+    }
 
     private fun shouldAttemptNightlyJournalUpload(nowMs: Long): net.hearth.canary.full.CanaryNightlyJournalDecision {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -312,6 +371,16 @@ class CanaryMonitorService : Service() {
         getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
             .edit()
             .putLong(KEY_LAST_SCHEDULED_AT, scheduledAt)
+            .apply()
+    }
+
+    private fun hasPendingManualFull(): Boolean =
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean(KEY_PENDING_MANUAL_FULL, false)
+
+    private fun setPendingManualFull(pending: Boolean) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+            .edit()
+            .putBoolean(KEY_PENDING_MANUAL_FULL, pending)
             .apply()
     }
 
@@ -361,6 +430,9 @@ class CanaryMonitorService : Service() {
         private const val PREFS_NAME = "canary_monitor"
         private const val KEY_LAST_SCHEDULED_AT = "lastScheduledAt"
         private const val KEY_LAST_NIGHTLY_JOURNAL_SUCCESS_DAY = "lastNightlyJournalSuccessDay"
+        private const val KEY_PENDING_MANUAL_FULL = "pendingManualFull"
+        private const val CYCLE_SKIP_REASON_OVERLAP = "overlap"
+        private const val CYCLE_SKIP_REASON_BUDGET = "budget"
     }
 }
 

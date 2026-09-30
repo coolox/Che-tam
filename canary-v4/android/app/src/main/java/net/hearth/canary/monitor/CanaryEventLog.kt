@@ -20,15 +20,25 @@ class CanaryEventLog(context: Context) {
     }
 
     @Synchronized
-    fun appendCycleSkipped(wakeupMethod: String, scheduledAt: Long, delayMs: Long) {
+    fun appendCycleSkipped(
+        wakeupMethod: String,
+        scheduledAt: Long,
+        delayMs: Long,
+        reason: String,
+        requestedKind: String,
+        currentRunId: String?,
+        queued: Boolean = false
+    ) {
         append(
-            JSONObject()
-                .put("recordId", UUID.randomUUID().toString())
-                .put("timestampUtc", System.currentTimeMillis())
-                .put("testType", "cycle_skipped")
-                .put("wakeupMethod", wakeupMethod)
-                .put("scheduledAt", scheduledAt)
-                .put("delayMs", delayMs)
+            cycleSkippedPayload(
+                wakeupMethod = wakeupMethod,
+                scheduledAt = scheduledAt,
+                delayMs = delayMs,
+                reason = reason,
+                requestedKind = requestedKind,
+                currentRunId = currentRunId,
+                queued = queued
+            )
         )
     }
 
@@ -100,6 +110,27 @@ internal fun cycleStartPayload(fields: CycleStartFields): JSONObject =
         .put("wifiRssi", fields.wifiRssi)
         .put("wifiLinkMbps", fields.wifiLinkMbps)
         .put("gmsAvailable", fields.gmsAvailable)
+
+internal fun cycleSkippedPayload(
+    wakeupMethod: String,
+    scheduledAt: Long,
+    delayMs: Long,
+    reason: String,
+    requestedKind: String,
+    currentRunId: String?,
+    queued: Boolean = false
+): JSONObject =
+    JSONObject()
+        .put("recordId", UUID.randomUUID().toString())
+        .put("timestampUtc", System.currentTimeMillis())
+        .put("testType", "cycle_skipped")
+        .put("wakeupMethod", wakeupMethod)
+        .put("scheduledAt", scheduledAt)
+        .put("delayMs", delayMs)
+        .put("reason", reason)
+        .put("requestedKind", requestedKind)
+        .putNullable("currentRunId", currentRunId)
+        .put("queued", queued)
 
 internal fun lightRunPayload(runId: String, result: CanaryTestResult): JSONObject =
     testResultPayload(runId, result.copy(runKind = "light"))

@@ -18,6 +18,8 @@ data class CanaryExportDeviceMetadata(
 data class CanaryJournalSummary(
     val lastRunText: String,
     val lastRunVerdict: String?,
+    val lastFullRunText: String,
+    val lastFullRunOutcome: String?,
     val runCount24h: Int,
     val expectedRunCount24h: Int,
     val serverOk24h: Int,
@@ -34,10 +36,36 @@ object CanaryJournalSummaryFormatter {
             if (json.optString("testType") != "run_summary") return@mapNotNull null
             RunSummaryRecord(
                 timestampUtc = record.timestampUtc,
+                runId = json.optString("runId", ""),
+                runKind = json.optString("runKind", "light"),
                 verdict = json.optString("runVerdict", "partial")
             )
         }
+        val fullBudgetRunIds = records.mapNotNull { record ->
+            val json = record.jsonOrNull() ?: return@mapNotNull null
+            if (json.optString("testType") == "budget_paused" && json.optString("runKind") == "full") {
+                json.optString("runId", "").takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        }.toSet()
+        val latestBudgetFallback = records.mapNotNull { record ->
+            val json = record.jsonOrNull() ?: return@mapNotNull null
+            val isBudgetSkipped = json.optString("testType") == "cycle_skipped" &&
+                json.optString("reason") == "budget" &&
+                json.optString("requestedKind") in setOf("full", "manual_full")
+            val isBudgetPaused = json.optString("testType") == "budget_paused" &&
+                json.optString("runKind") == "full"
+            if (isBudgetSkipped || isBudgetPaused) FullRunStatusRecord(record.timestampUtc, "budget-paused") else null
+        }.maxByOrNull { it.timestampUtc }
         val newest = summaries.maxByOrNull { it.timestampUtc }
+        val newestFullSummary = summaries.filter { it.runKind == "full" }.maxByOrNull { it.timestampUtc }
+        val newestFull = newestFullSummary?.let {
+            FullRunStatusRecord(
+                timestampUtc = it.timestampUtc,
+                outcome = if (it.runId.isNotBlank() && it.runId in fullBudgetRunIds) "budget-paused" else it.verdict
+            )
+        } ?: latestBudgetFallback
         val since = nowUtc - DAY_MS
         val lastDay = summaries.filter { it.timestampUtc >= since }
         val serverEligible = lastDay.filter { it.verdict != "offline" }
@@ -45,6 +73,8 @@ object CanaryJournalSummaryFormatter {
         return CanaryJournalSummary(
             lastRunText = newest?.let { "${relativeTime(it.timestampUtc, nowUtc)} — ${it.verdict}" } ?: "нет данных",
             lastRunVerdict = newest?.verdict,
+            lastFullRunText = newestFull?.let { "${relativeTime(it.timestampUtc, nowUtc)} — ${it.outcome}" } ?: "нет данных",
+            lastFullRunOutcome = newestFull?.outcome,
             runCount24h = lastDay.size,
             expectedRunCount24h = EXPECTED_RUNS_PER_DAY,
             serverOk24h = serverEligible.count { it.verdict == "ok" },
@@ -67,7 +97,14 @@ object CanaryJournalSummaryFormatter {
 
     private data class RunSummaryRecord(
         val timestampUtc: Long,
+        val runId: String,
+        val runKind: String,
         val verdict: String
+    )
+
+    private data class FullRunStatusRecord(
+        val timestampUtc: Long,
+        val outcome: String
     )
 
     private const val DAY_MS = 24L * 60L * 60L * 1000L

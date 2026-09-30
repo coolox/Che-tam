@@ -22,6 +22,9 @@ enum class CanaryRunKind(val wireValue: String) {
 object CanaryRunPlanner {
     fun kindForSlot(scheduledAtMs: Long): CanaryRunKind =
         if (Math.floorMod(scheduledAtMs, 60L * 60L * 1000L) == 0L) CanaryRunKind.FULL else CanaryRunKind.LIGHT
+
+    fun kindForWakeup(wakeupMethod: String, scheduledAtMs: Long): CanaryRunKind =
+        if (wakeupMethod == "manual_full") CanaryRunKind.FULL else kindForSlot(scheduledAtMs)
 }
 
 object CanaryUploadSchedule {

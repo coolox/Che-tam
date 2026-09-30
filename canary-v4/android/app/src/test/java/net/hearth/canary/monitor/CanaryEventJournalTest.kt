@@ -134,6 +134,42 @@ class CanaryEventJournalTest {
     }
 
     @Test
+    fun cycleSkippedPayloadExplainsOverlapAndQueuedManualFull() {
+        val payload = cycleSkippedPayload(
+            wakeupMethod = CanaryWakeupMethod.MANUAL_FULL,
+            scheduledAt = 1_800_000_000_000L,
+            delayMs = 2_000L,
+            reason = "overlap",
+            requestedKind = "manual_full",
+            currentRunId = "active-run",
+            queued = true
+        )
+
+        assertEquals("cycle_skipped", payload.getString("testType"))
+        assertEquals("overlap", payload.getString("reason"))
+        assertEquals("manual_full", payload.getString("requestedKind"))
+        assertEquals("active-run", payload.getString("currentRunId"))
+        assertTrue(payload.getBoolean("queued"))
+    }
+
+    @Test
+    fun cycleSkippedPayloadExplainsBudgetSuppressionWithoutActiveOverlap() {
+        val payload = cycleSkippedPayload(
+            wakeupMethod = CanaryWakeupMethod.SERVICE,
+            scheduledAt = 1_800_000_000_000L,
+            delayMs = 2_000L,
+            reason = "budget",
+            requestedKind = "full",
+            currentRunId = null
+        )
+
+        assertEquals("budget", payload.getString("reason"))
+        assertEquals("full", payload.getString("requestedKind"))
+        assertTrue(payload.isNull("currentRunId"))
+        assertEquals(false, payload.getBoolean("queued"))
+    }
+
+    @Test
     fun lightRunPayloadSerializesResolvedAddressesAsJsonArray() {
         val payload = lightRunPayload(
             "run-1",

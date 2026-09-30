@@ -38,6 +38,7 @@ import java.io.File
 class MainActivity : Activity() {
     private lateinit var deviceLabelInput: EditText
     private lateinit var lastRunValue: TextView
+    private lateinit var lastFullRunValue: TextView
     private lateinit var daySummaryValue: TextView
     private lateinit var appVersionValue: TextView
     private lateinit var readinessValue: TextView
@@ -86,6 +87,7 @@ class MainActivity : Activity() {
         })
 
         lastRunValue = valueRow(root, getString(R.string.last_run_title))
+        lastFullRunValue = valueRow(root, getString(R.string.last_full_run_title))
         daySummaryValue = valueRow(root, getString(R.string.day_summary_title))
         appVersionValue = valueRow(root, getString(R.string.app_version_title))
         readinessValue = valueRow(root, getString(R.string.readiness_title))
@@ -124,6 +126,7 @@ class MainActivity : Activity() {
         val readinessSummary = CanaryReadinessFormatter.format(readinessInput(now))
 
         lastRunValue.text = journalSummary.lastRunText
+        lastFullRunValue.text = journalSummary.lastFullRunText
         daySummaryValue.text = journalSummary.runCountText
         appVersionValue.text = BuildConfig.VERSION_NAME
         readinessValue.text = readinessSummary.statusText
