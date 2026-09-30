@@ -77,7 +77,28 @@ data class CanaryTestResult(
     val ageSec: Long? = null,
     val sameProcess: Boolean? = null,
     val closeCode: Int? = null,
-    val closeReason: String? = null
+    val closeReason: String? = null,
+    val runKind: String? = null,
+    val sni: String? = null,
+    val mode: String? = null,
+    val provider: String? = null,
+    val valuesMs: List<Long> = emptyList(),
+    val count: Int? = null,
+    val minMs: Long? = null,
+    val medianMs: Long? = null,
+    val p90Ms: Long? = null,
+    val maxMs: Long? = null,
+    val lost: Int? = null,
+    val connectMs: Long? = null,
+    val tlsMs: Long? = null,
+    val allocateMs: Long? = null,
+    val echoRttMs: Long? = null,
+    val echoBytes: Int? = null,
+    val throughputKbps: Long? = null,
+    val turnErrorCode: Int? = null,
+    val payloadBytes: Int? = null,
+    val bytesConfirmed: Long? = null,
+    val bytesToday: Long? = null
 ) {
     init {
         require(!success || errorCategory == CanaryErrorCategory.NONE) {

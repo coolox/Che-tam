@@ -34,6 +34,7 @@ fun buildConfigString(value: String): String =
 
 val canaryTlsPinSha2561 = localSecretProperty("canary.tlsPinSha256.1", "CANARY_TLS_PIN_SHA256_1")
 val canaryTlsPinSha2562 = localSecretProperty("canary.tlsPinSha256.2", "CANARY_TLS_PIN_SHA256_2")
+val canaryApiKey = localSecretProperty("canary.apiKey", "CANARY_API_KEY", "X_CANARY_KEY")
 
 gradle.taskGraph.whenReady {
     val requestsReleaseOutput = allTasks.any { task ->
@@ -67,8 +68,8 @@ android {
         applicationId = "net.hearth.canary.v4"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40005
-        versionName = "4.0.5"
+        versionCode = 40100
+        versionName = "4.1.0"
     }
 
     compileOptions {
@@ -94,6 +95,11 @@ android {
             "String",
             "CANARY_TLS_PIN_SHA256_2",
             buildConfigString(canaryTlsPinSha2562)
+        )
+        buildConfigField(
+            "String",
+            "CANARY_API_KEY",
+            buildConfigString(canaryApiKey)
         )
     }
 

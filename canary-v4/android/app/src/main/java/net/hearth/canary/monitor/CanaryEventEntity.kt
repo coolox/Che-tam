@@ -21,5 +21,7 @@ data class CanaryEventEntity(
     @ColumnInfo(name = "sequence")
     val sequence: Long,
     @ColumnInfo(name = "payload_json")
-    val payloadJson: String
+    val payloadJson: String,
+    @ColumnInfo(name = "sent_at_utc")
+    val sentAtUtc: Long? = null
 )

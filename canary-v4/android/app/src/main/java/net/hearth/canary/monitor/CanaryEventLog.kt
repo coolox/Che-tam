@@ -32,12 +32,12 @@ class CanaryEventLog(context: Context) {
 
     @Synchronized
     fun appendLightRunRecord(runId: String, result: CanaryTestResult) {
-        append(lightRunPayload(runId, result))
+        append(testResultPayload(runId, result))
     }
 
     @Synchronized
-    fun appendRunSummary(runId: String, summary: CanaryRunSummary) {
-        append(runSummaryPayload(runId, summary))
+    fun appendRunSummary(runId: String, summary: CanaryRunSummary, runKind: String = "light") {
+        append(runSummaryPayload(runId, summary, runKind))
     }
 
     @Synchronized
@@ -90,10 +90,13 @@ internal fun cycleStartPayload(fields: CycleStartFields): JSONObject =
         .put("wifiLinkMbps", fields.wifiLinkMbps)
 
 internal fun lightRunPayload(runId: String, result: CanaryTestResult): JSONObject =
+    testResultPayload(runId, result.copy(runKind = "light"))
+
+internal fun testResultPayload(runId: String, result: CanaryTestResult): JSONObject =
     JSONObject()
         .put("recordId", UUID.randomUUID().toString())
         .put("runId", runId)
-        .put("runKind", "light")
+        .put("runKind", result.runKind ?: "light")
         .put("timestampUtc", System.currentTimeMillis())
         .put("testType", result.testType)
         .put("target", result.target)
@@ -117,12 +120,32 @@ internal fun lightRunPayload(runId: String, result: CanaryTestResult): JSONObjec
         .putNullable("sameProcess", result.sameProcess)
         .putNullable("closeCode", result.closeCode)
         .putNullable("closeReason", result.closeReason)
+        .putNullable("sni", result.sni)
+        .putNullable("mode", result.mode)
+        .putNullable("provider", result.provider)
+        .put("valuesMs", JSONArray(result.valuesMs))
+        .putNullable("count", result.count)
+        .putNullable("minMs", result.minMs)
+        .putNullable("medianMs", result.medianMs)
+        .putNullable("p90Ms", result.p90Ms)
+        .putNullable("maxMs", result.maxMs)
+        .putNullable("lost", result.lost)
+        .putNullable("connectMs", result.connectMs)
+        .putNullable("tlsMs", result.tlsMs)
+        .putNullable("allocateMs", result.allocateMs)
+        .putNullable("echoRttMs", result.echoRttMs)
+        .putNullable("echoBytes", result.echoBytes)
+        .putNullable("throughputKbps", result.throughputKbps)
+        .putNullable("turnErrorCode", result.turnErrorCode)
+        .putNullable("payloadBytes", result.payloadBytes)
+        .putNullable("bytesConfirmed", result.bytesConfirmed)
+        .putNullable("bytesToday", result.bytesToday)
 
-internal fun runSummaryPayload(runId: String, summary: CanaryRunSummary): JSONObject =
+internal fun runSummaryPayload(runId: String, summary: CanaryRunSummary, runKind: String = "light"): JSONObject =
     JSONObject()
         .put("recordId", UUID.randomUUID().toString())
         .put("runId", runId)
-        .put("runKind", "light")
+        .put("runKind", runKind)
         .put("timestampUtc", System.currentTimeMillis())
         .put("testType", "run_summary")
         .put("testsTotal", summary.testsTotal)

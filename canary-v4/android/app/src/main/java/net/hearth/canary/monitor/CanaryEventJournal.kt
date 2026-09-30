@@ -30,6 +30,12 @@ class CanaryEventJournal(
     fun oldestFirst(limit: Int): List<CanaryEventEntity> =
         dao.oldestFirst(limit.coerceAtLeast(0))
 
+    fun unsentOldestFirst(limit: Int): List<CanaryEventEntity> =
+        dao.unsentOldestFirst(limit.coerceAtLeast(0))
+
+    fun markSent(recordIds: List<String>, sentAtUtc: Long = clock()): Int =
+        if (recordIds.isEmpty()) 0 else dao.markSent(recordIds, sentAtUtc)
+
     fun since(sinceUtc: Long): List<CanaryEventEntity> =
         dao.since(sinceUtc)
 
