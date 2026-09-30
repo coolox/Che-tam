@@ -1,13 +1,15 @@
 package net.hearth.canary.monitor
 
+import org.json.JSONObject
+
 class CanaryEventJournal(
     private val dao: CanaryEventDao,
     private val clock: () -> Long = System::currentTimeMillis
 ) {
     @Synchronized
     fun append(payloadJson: String): CanaryEventEntity {
-        val timestampUtc = clock()
-        prune(timestampUtc)
+        val timestampUtc = payloadJsonTimestampUtc(payloadJson)
+        prune(clock())
         val entity = CanaryEventEntity(
             recordId = payloadJsonRecordId(payloadJson),
             timestampUtc = timestampUtc,
@@ -40,7 +42,20 @@ class CanaryEventJournal(
         dao.since(sinceUtc)
 
     private fun payloadJsonRecordId(payloadJson: String): String =
-        org.json.JSONObject(payloadJson).getString("recordId")
+        JSONObject(payloadJson).getString("recordId")
+
+    private fun payloadJsonTimestampUtc(payloadJson: String): Long {
+        val payload = JSONObject(payloadJson)
+        require(payload.has("timestampUtc") && !payload.isNull("timestampUtc")) {
+            "Journal payload must include timestampUtc."
+        }
+        val timestampUtc = runCatching { payload.getLong("timestampUtc") }
+            .getOrElse { throw IllegalArgumentException("Journal payload timestampUtc must be a valid integer.", it) }
+        require(timestampUtc > 0L) {
+            "Journal payload timestampUtc must be positive."
+        }
+        return timestampUtc
+    }
 
     companion object {
         const val RETENTION_DAYS = 30L

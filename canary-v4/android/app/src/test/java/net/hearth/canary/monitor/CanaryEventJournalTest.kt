@@ -2,6 +2,7 @@ package net.hearth.canary.monitor
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -36,7 +37,42 @@ class CanaryEventJournalTest {
         assertEquals(listOf("second", "first"), journal.newestFirst(10).map { it.recordId })
         assertEquals(listOf("first", "second"), journal.oldestFirst(10).map { it.recordId })
         assertEquals("run_summary", JSONObject(journal.newestFirst(1).single().payloadJson).getString("testType"))
+        assertEquals(3_000_000_000_001L, journal.newestFirst(1).single().timestampUtc)
         assertEquals(2, journal.count())
+    }
+
+    @Test
+    fun appendRejectsPayloadMissingTimestampUtc() {
+        val dao = FakeCanaryEventDao()
+        val journal = CanaryEventJournal(dao) { 3_000_000_000_000L }
+        val payload = JSONObject()
+            .put("recordId", "missing")
+            .put("testType", "cycle_start")
+            .toString()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            journal.append(payload)
+        }
+        assertEquals(0, journal.count())
+    }
+
+    @Test
+    fun appendRejectsNullNonPositiveAndInvalidTimestampUtc() {
+        val dao = FakeCanaryEventDao()
+        val journal = CanaryEventJournal(dao) { 3_000_000_000_000L }
+        val payloads = listOf(
+            JSONObject().put("recordId", "null").put("timestampUtc", JSONObject.NULL),
+            JSONObject().put("recordId", "zero").put("timestampUtc", 0L),
+            JSONObject().put("recordId", "negative").put("timestampUtc", -1L),
+            JSONObject().put("recordId", "invalid").put("timestampUtc", "not-a-number")
+        )
+
+        payloads.forEach { payload ->
+            assertThrows(IllegalArgumentException::class.java) {
+                journal.append(payload.put("testType", "cycle_start").toString())
+            }
+        }
+        assertEquals(0, journal.count())
     }
 
     @Test
@@ -69,6 +105,10 @@ class CanaryEventJournalTest {
                 batteryPct = 80,
                 isCharging = true,
                 batteryOptimizationIgnored = true,
+                screenOn = true,
+                deviceIdleMode = false,
+                powerSaveMode = false,
+                appStandbyBucket = 10,
                 exactAlarmAllowed = true,
                 notificationsAllowed = true,
                 uptimeSec = 100L,
@@ -85,6 +125,10 @@ class CanaryEventJournalTest {
         assertEquals("wifi", payload.getString("networkType"))
         assertEquals(-55, payload.getInt("wifiRssi"))
         assertEquals(144, payload.getInt("wifiLinkMbps"))
+        assertTrue(payload.getBoolean("screenOn"))
+        assertEquals(false, payload.getBoolean("deviceIdleMode"))
+        assertEquals(false, payload.getBoolean("powerSaveMode"))
+        assertEquals(10, payload.getInt("appStandbyBucket"))
     }
 
     @Test
@@ -167,9 +211,39 @@ class CanaryEventJournalTest {
         assertTrue(payload.isNull("bytesRx"))
     }
 
+    @Test
+    fun wsClosedEventPayloadSerializesCallbackClosureContext() {
+        val payload = wsClosedEventPayload(
+            net.hearth.canary.light.CanaryWsClosedEvent(
+                timestampUtc = 1_900_000_000_000L,
+                connectionId = "connection-1",
+                ageSec = 42L,
+                closeCode = 1000,
+                exceptionClass = null,
+                networkType = "wifi",
+                screenOn = true,
+                detectedBy = "callback"
+            )
+        )
+
+        assertEquals("ws_closed_event", payload.getString("testType"))
+        assertEquals(1_900_000_000_000L, payload.getLong("timestampUtc"))
+        assertEquals("connection-1", payload.getString("connectionId"))
+        assertEquals(42L, payload.getLong("ageSec"))
+        assertEquals(1000, payload.getInt("closeCode"))
+        assertTrue(payload.isNull("exceptionClass"))
+        assertEquals("wifi", payload.getString("networkType"))
+        assertTrue(payload.getBoolean("screenOn"))
+        assertEquals("callback", payload.getString("detectedBy"))
+    }
+
     private fun payload(recordId: String, testType: String): String =
         JSONObject()
             .put("recordId", recordId)
+            .put("timestampUtc", when (recordId) {
+                "first" -> 3_000_000_000_000L
+                else -> 3_000_000_000_001L
+            })
             .put("testType", testType)
             .put("value", "round-trip")
             .toString()
@@ -208,6 +282,22 @@ private class FakeCanaryEventDao : CanaryEventDao {
 
     override fun oldestFirst(limit: Int): List<CanaryEventEntity> =
         events.sortedBy { it.sequence }.take(limit)
+
+    override fun unsentOldestFirst(limit: Int): List<CanaryEventEntity> =
+        events.filter { it.sentAtUtc == null }.sortedBy { it.sequence }.take(limit)
+
+    override fun markSent(recordIds: List<String>, sentAtUtc: Long): Int {
+        var marked = 0
+        events.replaceAll { event ->
+            if (event.recordId in recordIds) {
+                marked += 1
+                event.copy(sentAtUtc = sentAtUtc)
+            } else {
+                event
+            }
+        }
+        return marked
+    }
 
     override fun since(sinceUtc: Long): List<CanaryEventEntity> =
         events.filter { it.timestampUtc >= sinceUtc }.sortedBy { it.sequence }

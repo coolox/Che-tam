@@ -2,6 +2,8 @@ package net.hearth.canary.light
 
 import android.content.Context
 import net.hearth.canary.BuildConfig
+import net.hearth.canary.monitor.CanaryEventLog
+import net.hearth.canary.monitor.CanarySystemSnapshot
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -10,9 +12,14 @@ import okhttp3.WebSocketListener
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-class CanaryWebSocketKeeper private constructor(context: Context) {
+class CanaryWebSocketKeeper private constructor(
+    context: Context,
+    private val closedEventReporter: CanaryWsClosedEventReporter,
+    private val stateProvider: CanaryWsStateProvider
+) {
     private val client = buildClient()
     private val deviceLabel = CanaryCorrelation.deviceLabel(context)
     private val lock = Any()
@@ -55,7 +62,8 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
         synchronized(lock) {
             socket?.let { return it }
             val id = CanaryCorrelation.newConnectionId()
-            val listener = Listener()
+            val connectedAt = System.currentTimeMillis()
+            val listener = Listener(id, connectedAt)
             currentListener.set(listener)
             val request = CanaryCorrelation.websocketRequest(
                 CanaryLightRunExecutor.SERVER_WS_URL,
@@ -64,7 +72,7 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
             )
             connectionId = id
             socket = client.newWebSocket(request, listener)
-            connectedAtMs = System.currentTimeMillis()
+            connectedAtMs = connectedAt
             return socket!!
         }
     }
@@ -103,9 +111,13 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
         return builder.build()
     }
 
-    private class Listener : WebSocketListener() {
+    private inner class Listener(
+        private val listenerConnectionId: String,
+        private val listenerConnectedAtMs: Long
+    ) : WebSocketListener() {
         @Volatile
         var nextPong: ExpectedPong? = null
+        private val reported = AtomicBoolean(false)
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             val expected = nextPong
@@ -115,8 +127,44 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
             }
         }
 
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            nextPong = null
+            reportClosed(closeCode = code, exceptionClass = null)
+            clearSocket(listenerConnectionId)
+        }
+
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             nextPong = null
+            reportClosed(closeCode = null, exceptionClass = t.javaClass.name)
+            clearSocket(listenerConnectionId)
+        }
+
+        private fun reportClosed(closeCode: Int?, exceptionClass: String?) {
+            if (!reported.compareAndSet(false, true)) return
+
+            val state = stateProvider.snapshot()
+            closedEventReporter.report(
+                CanaryWsClosedEvent(
+                    timestampUtc = System.currentTimeMillis(),
+                    connectionId = listenerConnectionId,
+                    ageSec = ((System.currentTimeMillis() - listenerConnectedAtMs).coerceAtLeast(0L)) / 1000L,
+                    closeCode = closeCode,
+                    exceptionClass = exceptionClass,
+                    networkType = state.networkType,
+                    screenOn = state.screenOn,
+                    detectedBy = "callback"
+                )
+            )
+        }
+    }
+
+    private fun clearSocket(closedConnectionId: String) {
+        synchronized(lock) {
+            if (connectionId == closedConnectionId) {
+                socket = null
+                connectionId = null
+                connectedAtMs = 0L
+            }
         }
     }
 
@@ -133,7 +181,42 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
 
         fun shared(context: Context): CanaryWebSocketKeeper =
             shared ?: synchronized(this) {
-                shared ?: CanaryWebSocketKeeper(context).also { shared = it }
+                shared ?: CanaryWebSocketKeeper(
+                    context,
+                    AndroidCanaryWsClosedEventReporter(context.applicationContext),
+                    AndroidCanaryWsStateProvider(context.applicationContext)
+                ).also { shared = it }
             }
+    }
+}
+
+interface CanaryWsClosedEventReporter {
+    fun report(event: CanaryWsClosedEvent)
+}
+
+data class CanaryWsState(
+    val networkType: String,
+    val screenOn: Boolean?
+)
+
+interface CanaryWsStateProvider {
+    fun snapshot(): CanaryWsState
+}
+
+private class AndroidCanaryWsClosedEventReporter(private val context: Context) : CanaryWsClosedEventReporter {
+    override fun report(event: CanaryWsClosedEvent) {
+        runCatching {
+            CanaryEventLog(context.applicationContext).appendWsClosedEvent(event)
+        }
+    }
+}
+
+private class AndroidCanaryWsStateProvider(private val context: Context) : CanaryWsStateProvider {
+    override fun snapshot(): CanaryWsState {
+        val state = CanarySystemSnapshot.collectWsState(context.applicationContext)
+        return CanaryWsState(
+            networkType = state.networkType,
+            screenOn = state.screenOn
+        )
     }
 }

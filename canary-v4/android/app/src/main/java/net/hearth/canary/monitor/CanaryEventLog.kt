@@ -4,6 +4,7 @@ import android.content.Context
 import net.hearth.canary.light.CanaryPhases
 import net.hearth.canary.light.CanaryRunSummary
 import net.hearth.canary.light.CanaryTestResult
+import net.hearth.canary.light.CanaryWsClosedEvent
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -23,6 +24,7 @@ class CanaryEventLog(context: Context) {
         append(
             JSONObject()
                 .put("recordId", UUID.randomUUID().toString())
+                .put("timestampUtc", System.currentTimeMillis())
                 .put("testType", "cycle_skipped")
                 .put("wakeupMethod", wakeupMethod)
                 .put("scheduledAt", scheduledAt)
@@ -38,6 +40,11 @@ class CanaryEventLog(context: Context) {
     @Synchronized
     fun appendRunSummary(runId: String, summary: CanaryRunSummary, runKind: String = "light") {
         append(runSummaryPayload(runId, summary, runKind))
+    }
+
+    @Synchronized
+    fun appendWsClosedEvent(event: CanaryWsClosedEvent) {
+        append(wsClosedEventPayload(event))
     }
 
     @Synchronized
@@ -81,6 +88,10 @@ internal fun cycleStartPayload(fields: CycleStartFields): JSONObject =
         .put("batteryPct", fields.batteryPct)
         .put("isCharging", fields.isCharging)
         .put("batteryOptimizationIgnored", fields.batteryOptimizationIgnored)
+        .put("screenOn", fields.screenOn)
+        .put("deviceIdleMode", fields.deviceIdleMode)
+        .put("powerSaveMode", fields.powerSaveMode)
+        .putNullable("appStandbyBucket", fields.appStandbyBucket)
         .put("exactAlarmAllowed", fields.exactAlarmAllowed)
         .put("notificationsAllowed", fields.notificationsAllowed)
         .put("uptimeSec", fields.uptimeSec)
@@ -154,6 +165,19 @@ internal fun runSummaryPayload(runId: String, summary: CanaryRunSummary, runKind
         .putNullable("bytesTx", summary.bytesTx?.takeIf { it >= 0L })
         .putNullable("bytesRx", summary.bytesRx?.takeIf { it >= 0L })
 
+internal fun wsClosedEventPayload(event: CanaryWsClosedEvent): JSONObject =
+    JSONObject()
+        .put("recordId", UUID.randomUUID().toString())
+        .put("timestampUtc", event.timestampUtc)
+        .put("testType", "ws_closed_event")
+        .put("connectionId", event.connectionId)
+        .put("ageSec", event.ageSec)
+        .putNullable("closeCode", event.closeCode)
+        .putNullable("exceptionClass", event.exceptionClass)
+        .put("networkType", event.networkType)
+        .putNullable("screenOn", event.screenOn)
+        .put("detectedBy", event.detectedBy)
+
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
     put(name, value ?: JSONObject.NULL)
 
@@ -175,6 +199,10 @@ data class CycleStartFields(
     val batteryPct: Int?,
     val isCharging: Boolean,
     val batteryOptimizationIgnored: Boolean,
+    val screenOn: Boolean,
+    val deviceIdleMode: Boolean,
+    val powerSaveMode: Boolean,
+    val appStandbyBucket: Int?,
     val exactAlarmAllowed: Boolean,
     val notificationsAllowed: Boolean,
     val uptimeSec: Long,

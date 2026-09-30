@@ -3,6 +3,7 @@ package net.hearth.canary.monitor
 import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationManager
+import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -50,6 +51,10 @@ object CanarySystemSnapshot {
                 status == BatteryManager.BATTERY_STATUS_FULL ||
                 plugged != 0,
             batteryOptimizationIgnored = powerManager.isIgnoringBatteryOptimizations(context.packageName),
+            screenOn = powerManager.isInteractive,
+            deviceIdleMode = powerManager.isDeviceIdleMode,
+            powerSaveMode = powerManager.isPowerSaveMode,
+            appStandbyBucket = collectAppStandbyBucket(context),
             exactAlarmAllowed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 alarmManager.canScheduleExactAlarms()
             } else {
@@ -75,34 +80,73 @@ object CanarySystemSnapshot {
     private fun collectNetworkSnapshot(context: Context): NetworkSnapshot {
         val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
             ?: return NetworkSnapshot(networkType = "unknown")
-        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        val capabilities = runCatching {
+            connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        }.getOrNull()
             ?: return NetworkSnapshot(networkType = "unknown")
 
-        val networkType = when {
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
-            else -> "other"
-        }
-        val wifiInfo = if (
-            networkType == "wifi" &&
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            capabilities.transportInfo is WifiInfo
-        ) {
-            capabilities.transportInfo as WifiInfo
-        } else {
-            null
-        }
-
-        return NetworkSnapshot(
-            networkType = networkType,
+        val wifiInfo = transportWifiInfo(capabilities)
+        return CanaryNetworkSnapshotExtractor.fromCapabilities(
+            hasWifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI),
+            hasCellular = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR),
             wifiRssi = wifiInfo?.rssi,
             wifiLinkMbps = wifiInfo?.linkSpeed
         )
     }
 
-    private data class NetworkSnapshot(
-        val networkType: String,
-        val wifiRssi: Int? = null,
-        val wifiLinkMbps: Int? = null
-    )
+    private fun transportWifiInfo(capabilities: NetworkCapabilities): WifiInfo? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching { capabilities.transportInfo as? WifiInfo }.getOrNull()
+        } else {
+            null
+        }
+
+    private fun collectAppStandbyBucket(context: Context): Int? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            runCatching {
+                context.getSystemService(UsageStatsManager::class.java)?.appStandbyBucket
+            }.getOrNull()
+        } else {
+            null
+        }
+
+    internal fun collectWsState(context: Context): CanaryWsDeviceState {
+        val powerManager = context.getSystemService(PowerManager::class.java)
+        val networkSnapshot = collectNetworkSnapshot(context)
+        return CanaryWsDeviceState(
+            networkType = networkSnapshot.networkType,
+            screenOn = powerManager?.isInteractive
+        )
+    }
+}
+
+internal data class NetworkSnapshot(
+    val networkType: String,
+    val wifiRssi: Int? = null,
+    val wifiLinkMbps: Int? = null
+)
+
+internal data class CanaryWsDeviceState(
+    val networkType: String,
+    val screenOn: Boolean?
+)
+
+internal object CanaryNetworkSnapshotExtractor {
+    fun fromCapabilities(
+        hasWifi: Boolean,
+        hasCellular: Boolean,
+        wifiRssi: Int?,
+        wifiLinkMbps: Int?
+    ): NetworkSnapshot {
+        val networkType = when {
+            hasWifi -> "wifi"
+            hasCellular -> "cellular"
+            else -> "other"
+        }
+        return NetworkSnapshot(
+            networkType = networkType,
+            wifiRssi = wifiRssi.takeIf { hasWifi },
+            wifiLinkMbps = wifiLinkMbps.takeIf { hasWifi }
+        )
+    }
 }

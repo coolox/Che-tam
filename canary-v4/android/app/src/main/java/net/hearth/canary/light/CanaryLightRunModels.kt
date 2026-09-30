@@ -115,6 +115,17 @@ data class CanaryRunSummary(
     val bytesRx: Long? = null
 )
 
+data class CanaryWsClosedEvent(
+    val timestampUtc: Long,
+    val connectionId: String,
+    val ageSec: Long,
+    val closeCode: Int? = null,
+    val exceptionClass: String? = null,
+    val networkType: String,
+    val screenOn: Boolean?,
+    val detectedBy: String
+)
+
 enum class CanaryRunVerdict(val wireValue: String) {
     OK("ok"),
     OFFLINE("offline"),
