@@ -97,6 +97,7 @@ class CanaryEventJournalTest {
                 success = true,
                 errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
                 resolvedAddresses = listOf("203.0.113.1", "2001:db8::1"),
+                networkType = "cellular",
                 bytesTx = 12L,
                 bytesRx = 34L
             )
@@ -106,8 +107,64 @@ class CanaryEventJournalTest {
         assertSame(org.json.JSONArray::class.java, addresses.javaClass)
         assertEquals("203.0.113.1", payload.getJSONArray("resolvedAddresses").getString(0))
         assertEquals("2001:db8::1", payload.getJSONArray("resolvedAddresses").getString(1))
+        assertEquals("cellular", payload.getString("networkType"))
         assertEquals(12L, payload.getLong("bytesTx"))
         assertEquals(34L, payload.getLong("bytesRx"))
+    }
+
+    @Test
+    fun lightRunPayloadSuppressesZeroTrafficCounters() {
+        val payload = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "control_dns",
+                target = "example.test",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                networkType = "unknown",
+                bytesTx = 0L,
+                bytesRx = 0L
+            )
+        )
+
+        assertEquals("unknown", payload.getString("networkType"))
+        assertTrue(payload.isNull("bytesTx"))
+        assertTrue(payload.isNull("bytesRx"))
+    }
+
+    @Test
+    fun runSummaryPayloadIncludesAggregateTrafficCounters() {
+        val payload = runSummaryPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryRunSummary(
+                testsTotal = 9,
+                testsOk = 9,
+                runVerdict = net.hearth.canary.light.CanaryRunVerdict.OK,
+                bytesTx = 123L,
+                bytesRx = 456L
+            )
+        )
+
+        assertEquals("run_summary", payload.getString("testType"))
+        assertEquals(123L, payload.getLong("bytesTx"))
+        assertEquals(456L, payload.getLong("bytesRx"))
+    }
+
+    @Test
+    fun runSummaryPayloadSuppressesInvalidNegativeTrafficCounters() {
+        val payload = runSummaryPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryRunSummary(
+                testsTotal = 9,
+                testsOk = 8,
+                runVerdict = net.hearth.canary.light.CanaryRunVerdict.PARTIAL,
+                bytesTx = -1L,
+                bytesRx = -2L
+            )
+        )
+
+        assertTrue(payload.isNull("bytesTx"))
+        assertTrue(payload.isNull("bytesRx"))
     }
 
     private fun payload(recordId: String, testType: String): String =

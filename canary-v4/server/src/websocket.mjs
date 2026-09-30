@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const PRINTABLE_RE = /^[\x20-\x7e]{1,64}$/;
 
 export function handleWebSocketUpgrade(request, socket, { path, logger = console } = {}) {
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
@@ -14,8 +16,8 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     return;
   }
 
-  const connectionId = randomUUID();
-  const deviceLabel = typeof request.headers['x-device-label'] === 'string' ? request.headers['x-device-label'] : null;
+  const connectionId = validatedUuidHeader(request.headers['x-canary-connection-id']) ?? randomUUID();
+  const deviceLabel = validatedPrintableHeader(request.headers['x-canary-device-label']);
   const accept = createHash('sha1').update(key + WS_GUID).digest('base64');
   socket.write([
     'HTTP/1.1 101 Switching Protocols',
@@ -26,26 +28,52 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     '',
   ].join('\r\n'));
 
+  const openedAtMs = Date.now();
+  const openedAt = new Date(openedAtMs).toISOString();
   logger.info?.('canary_ws_open', {
     connectionId,
     deviceLabel,
-    timestamp: new Date().toISOString(),
+    timestamp: openedAt,
   });
-  const state = { buffer: Buffer.alloc(0), closed: false, closeCode: null };
+  const state = {
+    buffer: Buffer.alloc(0),
+    closed: false,
+    closeCode: null,
+    closeReason: null,
+    finalized: false,
+    lastReceivedAt: null,
+  };
 
   socket.on('data', (chunk) => {
+    state.lastReceivedAt = new Date().toISOString();
     state.buffer = Buffer.concat([state.buffer, chunk]);
     processFrames(socket, state);
   });
+  socket.on('end', () => {
+    finalizeClose(state.closeReason ?? 'remote_eof');
+  });
   socket.on('close', () => {
+    finalizeClose(state.closeReason ?? 'remote_eof');
+  });
+  socket.on('error', () => {
+    finalizeClose('socket_error');
+  });
+
+  function finalizeClose(reason) {
+    if (state.finalized) return;
+    state.finalized = true;
+    const closedAtMs = Date.now();
     logger.info?.('canary_ws_close', {
       connectionId,
       deviceLabel,
-      timestamp: new Date().toISOString(),
+      openedAt,
+      timestamp: new Date(closedAtMs).toISOString(),
+      durationMs: Math.max(0, closedAtMs - openedAtMs),
       closeCode: state.closeCode,
+      reason,
+      lastReceivedAt: state.lastReceivedAt,
     });
-  });
-  socket.on('error', () => {});
+  }
 }
 
 function processFrames(socket, state) {
@@ -65,11 +93,16 @@ function processFrames(socket, state) {
       if (state.buffer.length < offset + 8) return;
       const high = state.buffer.readUInt32BE(offset);
       if (high !== 0) {
-        closeSocket(socket, state, 1009);
+        closeSocket(socket, state, 1009, 'server_protocol_error');
         return;
       }
       length = state.buffer.readUInt32BE(offset + 4);
       offset += 8;
+    }
+
+    if (!masked) {
+      closeSocket(socket, state, 1002, 'server_protocol_error');
+      return;
     }
 
     const maskLength = masked ? 4 : 0;
@@ -90,6 +123,7 @@ function processFrames(socket, state) {
       socket.write(encodeFrame(opcode, payload));
     } else if (opcode === 0x8) {
       state.closeCode = payload.length >= 2 ? payload.readUInt16BE(0) : 1000;
+      state.closeReason = 'client_close';
       socket.write(encodeFrame(0x8, payload));
       socket.end();
       state.closed = true;
@@ -98,18 +132,27 @@ function processFrames(socket, state) {
     } else if (opcode === 0xA) {
       continue;
     } else {
-      closeSocket(socket, state, 1003);
+      closeSocket(socket, state, 1003, 'server_protocol_error');
     }
   }
 }
 
-function closeSocket(socket, state, code) {
+function closeSocket(socket, state, code, reason) {
   const payload = Buffer.alloc(2);
   payload.writeUInt16BE(code);
   state.closeCode = code;
+  state.closeReason = reason;
   state.closed = true;
   socket.write(encodeFrame(0x8, payload));
   socket.end();
+}
+
+function validatedUuidHeader(value) {
+  return typeof value === 'string' && value.length <= 64 && UUID_RE.test(value) ? value : null;
+}
+
+function validatedPrintableHeader(value) {
+  return typeof value === 'string' && PRINTABLE_RE.test(value) ? value : null;
 }
 
 export function encodeFrame(opcode, payload = Buffer.alloc(0)) {

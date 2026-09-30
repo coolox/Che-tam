@@ -35,6 +35,17 @@ class CanaryRunVerdictDeriverTest {
         assertEquals(CanaryRunVerdict.SERVER_BLOCKED, summary.runVerdict)
     }
 
+    @Test
+    fun includesAggregateRunTrafficWhenAvailable() {
+        val summary = CanaryRunVerdictDeriver.deriveLight(
+            controls(success = true) + listOf(record("control_dns", true)) + server(success = true),
+            runTraffic = CanaryTrafficSample(bytesTx = 10L, bytesRx = 20L)
+        )
+
+        assertEquals(10L, summary.bytesTx)
+        assertEquals(20L, summary.bytesRx)
+    }
+
     private fun controls(success: Boolean): List<CanaryTestResult> =
         (1..5).map { record("control_http", success) }
 

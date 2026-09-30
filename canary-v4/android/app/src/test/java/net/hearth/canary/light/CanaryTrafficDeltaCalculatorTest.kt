@@ -25,4 +25,15 @@ class CanaryTrafficDeltaCalculatorTest {
 
         assertNull(delta)
     }
+
+    @Test
+    fun keepsZeroAsValidAggregateDelta() {
+        val delta = CanaryTrafficDeltaCalculator.delta(
+            before = CanaryTrafficSample(bytesTx = 100L, bytesRx = 200L),
+            after = CanaryTrafficSample(bytesTx = 100L, bytesRx = 205L)
+        )
+
+        assertEquals(0L, delta?.bytesTx)
+        assertEquals(5L, delta?.bytesRx)
+    }
 }

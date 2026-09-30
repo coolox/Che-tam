@@ -5,8 +5,10 @@ import android.net.TrafficStats
 import android.os.Looper
 import android.os.Process
 import net.hearth.canary.BuildConfig
+import net.hearth.canary.ui.CanaryDeviceLabelStore
 import okhttp3.Call
 import okhttp3.CertificatePinner
+import okhttp3.ConnectionPool
 import okhttp3.EventListener
 import okhttp3.Handshake
 import okhttp3.OkHttpClient
@@ -17,6 +19,7 @@ import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
@@ -25,6 +28,7 @@ class CanaryLightRunExecutor(
     private val webSocketKeeper: CanaryWebSocketKeeper = CanaryWebSocketKeeper.shared(context)
 ) {
     private val appContext = context.applicationContext
+    private val deviceLabel = CanaryCorrelation.deviceLabel(appContext)
     private val dnsState = CanaryDnsState(appContext)
     private val baseClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -33,34 +37,28 @@ class CanaryLightRunExecutor(
         .callTimeout(12, TimeUnit.SECONDS)
         .build()
 
-    fun run(): List<CanaryTestResult> {
+    fun run(): CanaryLightRun {
         CanaryLightRunThreadGuard.assertNotMainThread()
+        val trafficBefore = CanaryTrafficSampler.sample()
         val results = mutableListOf<CanaryTestResult>()
         CONTROL_HTTP_TARGETS.forEach { target ->
-            results += measuredTraffic {
-                executeHttp("control_http", target, "https://$target/", "HEAD", baseClient)
-            }
+            results += executeHttp("control_http", target, "https://$target/", controlClient())
         }
-        results += measuredTraffic { resolveDns("control_dns", CONTROL_DNS_TARGET) }
-        results += measuredTraffic { resolveDns("dns_resolve", SERVER_HOST) }
-        results += measuredTraffic { executeHttp("http_domain", SERVER_HOST, SERVER_HTTP_URL, "GET", pinnedClient()) }
-        results += measuredTraffic { webSocketKeeper.checkKeepalive() }
-        return results
-    }
-
-    private fun measuredTraffic(block: () -> CanaryTestResult): CanaryTestResult {
-        val before = CanaryTrafficSampler.sample()
-        val result = block()
-        val after = CanaryTrafficSampler.sample()
-        val delta = CanaryTrafficDeltaCalculator.delta(before, after)
-        return result.copy(bytesTx = delta?.bytesTx, bytesRx = delta?.bytesRx)
+        results += resolveDns("control_dns", CONTROL_DNS_TARGET)
+        results += resolveDns("dns_resolve", SERVER_HOST)
+        results += executeHttp("http_domain", SERVER_HOST, SERVER_HTTP_URL, freshPinnedServerClient())
+        results += webSocketKeeper.checkKeepalive()
+        val trafficAfter = CanaryTrafficSampler.sample()
+        return CanaryLightRun(
+            results = results,
+            traffic = CanaryTrafficDeltaCalculator.delta(trafficBefore, trafficAfter)
+        )
     }
 
     private fun executeHttp(
         testType: String,
         target: String,
         url: String,
-        method: String,
         client: OkHttpClient
     ): CanaryTestResult {
         val startedAt = System.currentTimeMillis()
@@ -69,13 +67,12 @@ class CanaryLightRunExecutor(
         val instrumented = client.newBuilder()
             .eventListenerFactory { InstrumentedEventListener(trackerRef, peerAddressRef) }
             .build()
-        val requestBuilder = Request.Builder().url(url)
-        val request = if (method == "HEAD") requestBuilder.head().build() else requestBuilder.get().build()
+        val request = CanaryHttpCallPolicy.request(testType, url, deviceLabel)
 
         return try {
             instrumented.newCall(request).execute().use { response ->
                 val phases = trackerRef.get()?.snapshot() ?: CanaryPhases()
-                val success = response.code in 200..399
+                val success = CanaryHttpCallPolicy.isSuccessfulResponse(testType, response.code)
                 val peerAddress = peerAddressRef.get()
                 CanaryTestResult(
                     testType = testType,
@@ -151,6 +148,12 @@ class CanaryLightRunExecutor(
             )
         }
     }
+
+    private fun controlClient(): OkHttpClient =
+        CanaryHttpCallPolicy.controlClient(baseClient)
+
+    private fun freshPinnedServerClient(): OkHttpClient =
+        CanaryHttpCallPolicy.freshServerClient(pinnedClient())
 
     private fun pinnedClient(): OkHttpClient {
         val pins = listOf(
@@ -230,6 +233,74 @@ class CanaryLightRunExecutor(
             "www.cloudflare.com"
         )
     }
+}
+
+data class CanaryLightRun(
+    val results: List<CanaryTestResult>,
+    val traffic: CanaryTrafficSample?
+)
+
+internal object CanaryHttpCallPolicy {
+    fun request(testType: String, url: String, deviceLabel: String = CanaryCorrelation.UNKNOWN_DEVICE_LABEL): Request {
+        val builder = Request.Builder().url(url).get()
+            .header(CanaryCorrelation.DEVICE_LABEL_HEADER, CanaryCorrelation.safeDeviceLabel(deviceLabel))
+        if (testType == "http_domain") {
+            builder.header("Connection", "close")
+        }
+        return builder.build()
+    }
+
+    fun controlClient(baseClient: OkHttpClient): OkHttpClient =
+        baseClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+
+    fun freshServerClient(baseClient: OkHttpClient): OkHttpClient =
+        baseClient.newBuilder()
+            .connectionPool(freshConnectionPool())
+            .build()
+
+    fun isSuccessfulResponse(testType: String, httpStatus: Int): Boolean =
+        if (testType == "control_http") true else httpStatus in 200..399
+
+    fun freshConnectionPool(): ConnectionPool =
+        ConnectionPool(FRESH_SERVER_MAX_IDLE_CONNECTIONS, 1, TimeUnit.NANOSECONDS)
+
+    const val FRESH_SERVER_MAX_IDLE_CONNECTIONS = 0
+}
+
+internal object CanaryCorrelation {
+    const val DEVICE_LABEL_HEADER = "X-Canary-Device-Label"
+    const val CONNECTION_ID_HEADER = "X-Canary-Connection-Id"
+    const val UNKNOWN_DEVICE_LABEL = "unknown"
+    private const val MAX_HEADER_LENGTH = 64
+    private val printable = Regex("^[\\x20-\\x7e]{1,64}$")
+
+    fun deviceLabel(context: Context): String =
+        runCatching { CanaryDeviceLabelStore.get(context.applicationContext) }
+            .getOrDefault(UNKNOWN_DEVICE_LABEL)
+            .let(::safeDeviceLabel)
+
+    fun safeDeviceLabel(value: String?): String {
+        val trimmed = value?.trim().orEmpty()
+        return if (trimmed.length <= MAX_HEADER_LENGTH && printable.matches(trimmed)) {
+            trimmed
+        } else {
+            UNKNOWN_DEVICE_LABEL
+        }
+    }
+
+    fun websocketRequest(url: String, deviceLabel: String, connectionId: String): Request =
+        Request.Builder()
+            .url(url)
+            .header(DEVICE_LABEL_HEADER, safeDeviceLabel(deviceLabel))
+            .header(CONNECTION_ID_HEADER, connectionId)
+            .build()
+
+    fun newConnectionId(): String = UUID.randomUUID().toString()
+
+    fun keepaliveResultConnectionId(currentConnectionId: String?): String =
+        currentConnectionId ?: newConnectionId()
 }
 
 object CanaryLightRunThreadGuard {

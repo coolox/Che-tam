@@ -48,8 +48,8 @@ Notes: Background special-use foreground monitor, persistent notification, 15-mi
 
 ## TASK-001d-2
 
-Status: implemented-awaiting-24h-verification
+Status: accepted
 
-Date: 2026-09-29
+Date: 2026-09-30
 
-Notes: Steps C–E are implemented: light network run with pinned TLS and echo-only WebSocket keepalive; Room-backed local 30-day journal; native status/readiness screen and manual FileProvider journal export. Hermes independently ran `testReleaseUnitTest` (22 passed, 0 failed) and `assembleRelease` successfully. The signed 4.0.1 APK awaits the required 24-hour owner-device verification before acceptance.
+Notes: Steps C–E were accepted after a 12.5-hour field run with approximately 96% scheduled-run completion and 100% Canary-server availability. The light network run uses pinned TLS and echo-only WebSocket keepalive; the app retains a Room-backed 30-day journal and provides native status/readiness plus manual FileProvider journal export. v4.0.4 is installed on field devices, including `tm-1` in Turkmenistan. Follow-on v4.0.5 calibration and log-correlation work is tracked separately as TASK-001d-2I/2J.

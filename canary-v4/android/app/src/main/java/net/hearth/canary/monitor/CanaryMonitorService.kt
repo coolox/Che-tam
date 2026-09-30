@@ -150,11 +150,14 @@ class CanaryMonitorService : Service() {
                 if (fields != null) {
                     appendCycleStart(fields)
                 }
-                val results = requireNotNull(lightRunExecutor) { "Light run executor is not initialized" }.run()
+                val lightRun = requireNotNull(lightRunExecutor) { "Light run executor is not initialized" }.run()
+                val results = lightRun.results.map { result ->
+                    result.copy(networkType = fields?.networkType ?: "unknown")
+                }
                 results.forEach { result ->
                     appendLightRunRecord(runId, result)
                 }
-                appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(results))
+                appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(results, lightRun.traffic))
             } catch (throwable: Throwable) {
                 appendCycleError("run_cycle_body", throwable)
             } finally {

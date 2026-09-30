@@ -70,6 +70,7 @@ data class CanaryTestResult(
     val previousIp: String? = null,
     val changed: Boolean? = null,
     val httpStatus: Int? = null,
+    val networkType: String? = null,
     val bytesTx: Long? = null,
     val bytesRx: Long? = null,
     val connectionId: String? = null,
@@ -88,7 +89,9 @@ data class CanaryTestResult(
 data class CanaryRunSummary(
     val testsTotal: Int,
     val testsOk: Int,
-    val runVerdict: CanaryRunVerdict
+    val runVerdict: CanaryRunVerdict,
+    val bytesTx: Long? = null,
+    val bytesRx: Long? = null
 )
 
 enum class CanaryRunVerdict(val wireValue: String) {
@@ -124,7 +127,7 @@ object CanaryAddressClassifier {
 }
 
 object CanaryRunVerdictDeriver {
-    fun deriveLight(results: List<CanaryTestResult>): CanaryRunSummary {
+    fun deriveLight(results: List<CanaryTestResult>, runTraffic: CanaryTrafficSample? = null): CanaryRunSummary {
         val testsOk = results.count { it.success }
         val controlResults = results.filter { it.testType == "control_http" }
         val serverResults = results.filter {
@@ -144,7 +147,9 @@ object CanaryRunVerdictDeriver {
         return CanaryRunSummary(
             testsTotal = results.size,
             testsOk = testsOk,
-            runVerdict = verdict
+            runVerdict = verdict,
+            bytesTx = runTraffic?.bytesTx,
+            bytesRx = runTraffic?.bytesRx
         )
     }
 }

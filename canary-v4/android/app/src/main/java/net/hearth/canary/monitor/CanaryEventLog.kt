@@ -109,9 +109,9 @@ internal fun lightRunPayload(runId: String, result: CanaryTestResult): JSONObjec
         .putNullable("previousIp", result.previousIp)
         .putNullable("changed", result.changed)
         .putNullable("httpStatus", result.httpStatus)
-        .putNullable("networkType", null)
-        .putNullable("bytesTx", result.bytesTx)
-        .putNullable("bytesRx", result.bytesRx)
+        .putNullable("networkType", result.networkType)
+        .putNullable("bytesTx", result.bytesTx?.takeIf { it > 0L })
+        .putNullable("bytesRx", result.bytesRx?.takeIf { it > 0L })
         .putNullable("connectionId", result.connectionId)
         .putNullable("ageSec", result.ageSec)
         .putNullable("sameProcess", result.sameProcess)
@@ -128,6 +128,8 @@ internal fun runSummaryPayload(runId: String, summary: CanaryRunSummary): JSONOb
         .put("testsTotal", summary.testsTotal)
         .put("testsOk", summary.testsOk)
         .put("runVerdict", summary.runVerdict.wireValue)
+        .putNullable("bytesTx", summary.bytesTx?.takeIf { it >= 0L })
+        .putNullable("bytesRx", summary.bytesRx?.takeIf { it >= 0L })
 
 private fun JSONObject.putNullable(name: String, value: Any?): JSONObject =
     put(name, value ?: JSONObject.NULL)

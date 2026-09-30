@@ -15,6 +15,17 @@ export function createCanaryServer({ canaryKey = '', journalStore, turn = null, 
   const server = createHttpServer(async (request, response) => {
     const startedAt = Date.now();
     const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
+    if (pathname.startsWith(CANARY_PATH)) {
+      response.on('finish', () => {
+        logger.info?.('canary_http_request', {
+          method: request.method,
+          pathname,
+          status: response.statusCode,
+          deviceLabel: validatedPrintableHeader(request.headers['x-canary-device-label']),
+          timestamp: new Date().toISOString(),
+        });
+      });
+    }
 
     try {
       if (request.method === 'GET' && pathname === CANARY_PATH) {
@@ -86,4 +97,10 @@ export function createCanaryServer({ canaryKey = '', journalStore, turn = null, 
   });
 
   return server;
+}
+
+const PRINTABLE_RE = /^[\x20-\x7e]{1,64}$/;
+
+function validatedPrintableHeader(value) {
+  return typeof value === 'string' && PRINTABLE_RE.test(value) ? value : null;
 }

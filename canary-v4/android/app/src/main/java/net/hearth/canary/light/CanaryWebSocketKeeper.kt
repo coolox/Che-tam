@@ -4,7 +4,6 @@ import android.content.Context
 import net.hearth.canary.BuildConfig
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -15,6 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class CanaryWebSocketKeeper private constructor(context: Context) {
     private val client = buildClient()
+    private val deviceLabel = CanaryCorrelation.deviceLabel(context)
     private val lock = Any()
     private var socket: WebSocket? = null
     private var connectionId: String? = null
@@ -24,7 +24,7 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
     fun checkKeepalive(): CanaryTestResult {
         val startedAt = System.currentTimeMillis()
         val current = ensureSocket()
-        val id = connectionId ?: UUID.randomUUID().toString()
+        val id = CanaryCorrelation.keepaliveResultConnectionId(connectionId)
         val ageSec = ((startedAt - connectedAtMs).coerceAtLeast(0L)) / 1000L
         val latch = CountDownLatch(1)
         val pingPayload = "canary-ping:${UUID.randomUUID()}"
@@ -54,14 +54,16 @@ class CanaryWebSocketKeeper private constructor(context: Context) {
     private fun ensureSocket(): WebSocket {
         synchronized(lock) {
             socket?.let { return it }
-            val id = UUID.randomUUID().toString()
+            val id = CanaryCorrelation.newConnectionId()
             val listener = Listener()
             currentListener.set(listener)
-            val request = Request.Builder()
-                .url(CanaryLightRunExecutor.SERVER_WS_URL)
-                .build()
-            socket = client.newWebSocket(request, listener)
+            val request = CanaryCorrelation.websocketRequest(
+                CanaryLightRunExecutor.SERVER_WS_URL,
+                deviceLabel,
+                id
+            )
             connectionId = id
+            socket = client.newWebSocket(request, listener)
             connectedAtMs = System.currentTimeMillis()
             return socket!!
         }

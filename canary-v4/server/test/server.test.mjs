@@ -44,7 +44,7 @@ describe('Canary v4 server', () => {
       journalStore: store,
       logger: silentLogger(),
     });
-    await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+    await listenLocal(server);
     const address = server.address();
     baseUrl = `http://127.0.0.1:${address.port}`;
   });
@@ -160,9 +160,10 @@ describe('Canary v4 server', () => {
     assert.equal(pong.payload.toString('utf8'), 'p');
 
     client.end(maskedFrame(0x8, Buffer.alloc(0)));
+    await onceEvent(client, 'close');
   });
 
-  it('logs WebSocket open and close metadata', async () => {
+  it('logs WebSocket open with validated client correlation headers', async () => {
     const logs = [];
     const logServer = createCanaryServer({
       canaryKey: TEST_KEY,
@@ -174,27 +175,219 @@ describe('Canary v4 server', () => {
         warn() {},
       },
     });
-    await new Promise((resolve) => logServer.listen(0, '127.0.0.1', resolve));
+    await listenLocal(logServer);
     const address = logServer.address();
     const url = `http://127.0.0.1:${address.port}`;
+    let client;
 
     try {
-      const client = await openWebSocket(url, CANARY_PATH, { 'X-Device-Label': 'tm-1' });
+      const connectionId = randomUUID();
+      client = await openWebSocket(url, CANARY_PATH, {
+        'X-Canary-Connection-Id': connectionId,
+        'X-Canary-Device-Label': 'tm-1',
+      });
+      await waitForLog(logs, 'canary_ws_open');
+
+      const openLog = logs.find((entry) => entry.event === 'canary_ws_open');
+      assert.equal(openLog.fields.connectionId, connectionId);
+      assert.equal(openLog.fields.deviceLabel, 'tm-1');
+      assert.match(openLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+      client.end(maskedFrame(0x8, closePayload(1000)));
+      await waitForLog(logs, 'canary_ws_close');
+    } finally {
+      await destroyClient(client);
+      await new Promise((resolve) => logServer.close(resolve));
+    }
+  });
+
+  it('logs one graceful WebSocket close with correlation and duration', async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+    let client;
+
+    try {
+      const connectionId = randomUUID();
+      client = await openWebSocket(url, CANARY_PATH, {
+        'X-Canary-Connection-Id': connectionId,
+        'X-Canary-Device-Label': 'tm-1',
+      });
       client.write(maskedFrame(0x8, closePayload(1001)));
       await onceEvent(client, 'close');
       await waitForLog(logs, 'canary_ws_close');
 
-      const openLog = logs.find((entry) => entry.event === 'canary_ws_open');
-      const closeLog = logs.find((entry) => entry.event === 'canary_ws_close');
-
-      assert.equal(openLog.fields.deviceLabel, 'tm-1');
-      assert.equal(typeof openLog.fields.connectionId, 'string');
-      assert.match(openLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
-      assert.equal(closeLog.fields.connectionId, openLog.fields.connectionId);
+      const closeLogs = logs.filter((entry) => entry.event === 'canary_ws_close');
+      assert.equal(closeLogs.length, 1);
+      const closeLog = closeLogs[0];
+      assert.equal(closeLog.fields.connectionId, connectionId);
       assert.equal(closeLog.fields.deviceLabel, 'tm-1');
+      assert.match(closeLog.fields.openedAt, /^\d{4}-\d{2}-\d{2}T/);
       assert.match(closeLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+      assert.equal(typeof closeLog.fields.durationMs, 'number');
       assert.equal(closeLog.fields.closeCode, 1001);
+      assert.equal(closeLog.fields.reason, 'client_close');
+      assert.match(closeLog.fields.lastReceivedAt, /^\d{4}-\d{2}-\d{2}T/);
     } finally {
+      await destroyClient(client);
+      await new Promise((resolve) => logServer.close(resolve));
+    }
+  });
+
+  it('logs one abrupt WebSocket TCP close with a non-graceful reason', { timeout: 3_000 }, async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+    let client;
+
+    try {
+      const connectionId = randomUUID();
+      client = await openWebSocket(url, CANARY_PATH, {
+        'X-Canary-Connection-Id': connectionId,
+        'X-Canary-Device-Label': 'tm-1',
+      });
+      if (typeof client.resetAndDestroy === 'function') {
+        client.resetAndDestroy();
+      } else {
+        client.destroy();
+      }
+      await waitForLog(logs, 'canary_ws_close');
+
+      const closeLogs = logs.filter((entry) => entry.event === 'canary_ws_close');
+      assert.equal(closeLogs.length, 1);
+      assert.equal(closeLogs[0].fields.connectionId, connectionId);
+      assert.equal(closeLogs[0].fields.deviceLabel, 'tm-1');
+      assert.equal(closeLogs[0].fields.closeCode, null);
+      assert.notEqual(closeLogs[0].fields.reason, 'client_close');
+    } finally {
+      await destroyClient(client);
+      await closeServer(logServer);
+    }
+  });
+
+  it('logs sanitized Canary HTTP request metadata with device label', async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const response = await requestJson(`${url}${CANARY_PATH}`, {
+        headers: { 'X-Canary-Device-Label': 'tm-1' },
+      });
+      await waitForLog(logs, 'canary_http_request');
+
+      const httpLog = logs.find((entry) => entry.event === 'canary_http_request');
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(Object.keys(httpLog.fields).sort(), [
+        'deviceLabel',
+        'method',
+        'pathname',
+        'status',
+        'timestamp',
+      ]);
+      assert.equal(httpLog.fields.method, 'GET');
+      assert.equal(httpLog.fields.pathname, CANARY_PATH);
+      assert.equal(httpLog.fields.status, 200);
+      assert.equal(httpLog.fields.deviceLabel, 'tm-1');
+      assert.match(httpLog.fields.timestamp, /^\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      await new Promise((resolve) => logServer.close(resolve));
+    }
+  });
+
+  it('accepts legacy Canary HTTP GET without correlation headers and logs null label', async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+
+    try {
+      const response = await requestJson(`${url}${CANARY_PATH}`);
+      await waitForLog(logs, 'canary_http_request');
+
+      const httpLog = logs.find((entry) => entry.event === 'canary_http_request');
+      assert.equal(response.statusCode, 200);
+      assert.deepEqual(response.body, { status: 'ok' });
+      assert.equal(httpLog.fields.method, 'GET');
+      assert.equal(httpLog.fields.pathname, CANARY_PATH);
+      assert.equal(httpLog.fields.status, 200);
+      assert.equal(httpLog.fields.deviceLabel, null);
+    } finally {
+      await new Promise((resolve) => logServer.close(resolve));
+    }
+  });
+
+  it('accepts legacy WebSocket upgrade without correlation headers and logs server correlation', async () => {
+    const logs = [];
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+    let client;
+
+    try {
+      client = await openWebSocket(url, CANARY_PATH);
+      await waitForLog(logs, 'canary_ws_open');
+
+      const openLog = logs.find((entry) => entry.event === 'canary_ws_open');
+      assert.match(openLog.fields.connectionId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+      assert.equal(openLog.fields.deviceLabel, null);
+
+      client.end(maskedFrame(0x8, closePayload(1000)));
+      await waitForLog(logs, 'canary_ws_close');
+    } finally {
+      await destroyClient(client);
       await new Promise((resolve) => logServer.close(resolve));
     }
   });
@@ -255,6 +448,10 @@ function openWebSocket(baseUrl, path, headers = {}) {
   const headerLines = Object.entries(headers).map(([name, value]) => `${name}: ${value}`);
 
   return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('websocket upgrade timeout'));
+    }, 1_000);
     const socket = connect(Number(url.port), url.hostname, () => {
       socket.write([
         `GET ${path} HTTP/1.1`,
@@ -276,16 +473,25 @@ function openWebSocket(baseUrl, path, headers = {}) {
       if (marker === -1) return;
       const head = buffer.subarray(0, marker).toString('utf8');
       if (!head.startsWith('HTTP/1.1 101')) {
+        clearTimeout(timer);
         reject(new Error(`websocket upgrade failed: ${head}`));
         socket.destroy();
         return;
       }
+      clearTimeout(timer);
       socket.off('data', onData);
       socket.unshift(buffer.subarray(marker + 4));
       resolve(socket);
     });
-    socket.on('error', reject);
+    socket.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
   });
+}
+
+function listenLocal(server) {
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
 }
 
 function closePayload(code) {
@@ -357,6 +563,19 @@ async function waitForLog(logs, eventName) {
     }
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  assert.fail(`timed out waiting for ${eventName}`);
+}
+
+async function destroyClient(client) {
+  if (!client || client.destroyed) return;
+  const closed = onceEvent(client, 'close').catch(() => {});
+  client.destroy();
+  await closed;
+}
+
+async function closeServer(server) {
+  server.closeAllConnections?.();
+  await new Promise((resolve) => server.close(resolve));
 }
 
 function silentLogger() {
