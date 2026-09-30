@@ -94,6 +94,10 @@ class MainActivity : Activity() {
             CanaryMonitorStarter.startFromManual(this)
             refresh()
         })
+        root.addView(actionButton(getString(R.string.full_check_now_button)) {
+            CanaryMonitorStarter.startFromManualFull(this)
+            refresh()
+        })
         root.addView(actionButton(getString(R.string.export_journal_button)) {
             shareJournalExport()
         })

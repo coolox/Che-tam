@@ -98,7 +98,9 @@ data class CanaryTestResult(
     val turnErrorCode: Int? = null,
     val payloadBytes: Int? = null,
     val bytesConfirmed: Long? = null,
-    val bytesToday: Long? = null
+    val bytesToday: Long? = null,
+    val intervalSec: Int? = null,
+    val reason: String? = null
 ) {
     init {
         require(!success || errorCategory == CanaryErrorCategory.NONE) {

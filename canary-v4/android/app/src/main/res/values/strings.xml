@@ -15,6 +15,7 @@
     <string name="app_version_title">Версия приложения</string>
     <string name="readiness_title">Готовность</string>
     <string name="check_now_button">Проверить сейчас</string>
+    <string name="full_check_now_button">Полный прогон сейчас</string>
     <string name="export_journal_button">Отправить журнал</string>
     <string name="readiness_button">Готовность</string>
     <string name="notification_settings_button">Настройки уведомлений</string>

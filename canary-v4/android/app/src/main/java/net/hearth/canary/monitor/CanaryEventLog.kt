@@ -99,6 +99,7 @@ internal fun cycleStartPayload(fields: CycleStartFields): JSONObject =
         .put("networkType", fields.networkType)
         .put("wifiRssi", fields.wifiRssi)
         .put("wifiLinkMbps", fields.wifiLinkMbps)
+        .put("gmsAvailable", fields.gmsAvailable)
 
 internal fun lightRunPayload(runId: String, result: CanaryTestResult): JSONObject =
     testResultPayload(runId, result.copy(runKind = "light"))
@@ -151,6 +152,8 @@ internal fun testResultPayload(runId: String, result: CanaryTestResult): JSONObj
         .putNullable("payloadBytes", result.payloadBytes)
         .putNullable("bytesConfirmed", result.bytesConfirmed)
         .putNullable("bytesToday", result.bytesToday)
+        .putNullable("intervalSec", result.intervalSec)
+        .putNullable("reason", result.reason)
 
 internal fun runSummaryPayload(runId: String, summary: CanaryRunSummary, runKind: String = "light"): JSONObject =
     JSONObject()
@@ -209,7 +212,8 @@ data class CycleStartFields(
     val processStartedAt: Long,
     val networkType: String,
     val wifiRssi: Int?,
-    val wifiLinkMbps: Int?
+    val wifiLinkMbps: Int?,
+    val gmsAvailable: Boolean
 )
 
 private const val MAX_CYCLE_ERROR_STACK_LINES = 20

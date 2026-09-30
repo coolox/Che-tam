@@ -70,22 +70,30 @@ class CanaryLightRunExecutor(
         val request = CanaryHttpCallPolicy.request(testType, url, deviceLabel)
 
         return try {
-            instrumented.newCall(request).execute().use { response ->
+            val response = instrumented.newCall(request).execute()
+            try {
                 val phases = trackerRef.get()?.snapshot() ?: CanaryPhases()
-                val success = CanaryHttpCallPolicy.isSuccessfulResponse(testType, response.code)
+                val httpStatus = if (testType == "control_http") {
+                    CanaryHttpCallPolicy.closeAfterHeaders(response)
+                } else {
+                    response.use { it.code }
+                }
+                val success = CanaryHttpCallPolicy.isSuccessfulResponse(testType, httpStatus)
                 val peerAddress = peerAddressRef.get()
                 CanaryTestResult(
                     testType = testType,
                     target = target,
                     success = success,
                     errorCategory = if (success) CanaryErrorCategory.NONE else CanaryErrorCategory.HTTP_ERROR,
-                    errorDetail = if (success) null else "HTTP ${response.code}",
+                    errorDetail = if (success) null else "HTTP $httpStatus",
                     latencyMs = System.currentTimeMillis() - startedAt,
                     phases = phases,
                     resolvedIp = peerAddress?.hostAddress,
                     addressFamily = peerAddress?.let(CanaryAddressClassifier::family),
-                    httpStatus = response.code
+                    httpStatus = httpStatus
                 )
+            } finally {
+                if (testType == "control_http") response.close()
             }
         } catch (throwable: Throwable) {
             val tracker = trackerRef.get()
@@ -244,6 +252,9 @@ internal object CanaryHttpCallPolicy {
     fun request(testType: String, url: String, deviceLabel: String = CanaryCorrelation.UNKNOWN_DEVICE_LABEL): Request {
         val builder = Request.Builder().url(url).get()
             .header(CanaryCorrelation.DEVICE_LABEL_HEADER, CanaryCorrelation.safeDeviceLabel(deviceLabel))
+        if (testType == "control_http") {
+            builder.header("Range", "bytes=0-0")
+        }
         if (testType == "http_domain") {
             builder.header("Connection", "close")
         }
@@ -262,6 +273,9 @@ internal object CanaryHttpCallPolicy {
 
     fun isSuccessfulResponse(testType: String, httpStatus: Int): Boolean =
         if (testType == "control_http") true else httpStatus in 200..399
+
+    fun closeAfterHeaders(response: Response): Int =
+        response.code.also { response.close() }
 
     fun freshConnectionPool(): ConnectionPool =
         ConnectionPool(FRESH_SERVER_MAX_IDLE_CONNECTIONS, 1, TimeUnit.NANOSECONDS)

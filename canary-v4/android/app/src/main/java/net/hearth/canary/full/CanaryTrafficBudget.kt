@@ -9,7 +9,7 @@ class CanaryTrafficBudget(context: Context, private val clock: () -> Long = Syst
 
     fun bytesToday(): Long = state().bytesToday
 
-    fun canRunHeavy(): Boolean = bytesToday() <= DAILY_LIMIT_BYTES
+    fun canRunHeavy(): Boolean = bytesToday() < DAILY_LIMIT_BYTES
 
     fun addServerBytes(bytes: Long) {
         if (bytes <= 0L) return

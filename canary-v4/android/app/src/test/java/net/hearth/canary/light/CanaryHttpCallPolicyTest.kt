@@ -2,12 +2,18 @@ package net.hearth.canary.light
 
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.ResponseBody
+import okhttp3.MediaType
+import okio.BufferedSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class CanaryHttpCallPolicyTest {
     @Test
@@ -17,6 +23,7 @@ class CanaryHttpCallPolicyTest {
 
         assertEquals("GET", request.method)
         assertEquals("tm-1", request.header("X-Canary-Device-Label"))
+        assertEquals("bytes=0-0", request.header("Range"))
         assertEquals(listOf(Protocol.HTTP_1_1), client.protocols)
         assertTrue(CanaryHttpCallPolicy.isSuccessfulResponse("control_http", 403))
         assertTrue(CanaryHttpCallPolicy.isSuccessfulResponse("control_http", 500))
@@ -40,7 +47,43 @@ class CanaryHttpCallPolicyTest {
     fun nonControlHttpStatusStillUsesStatusRange() {
         assertTrue(CanaryHttpCallPolicy.isSuccessfulResponse("http_domain", 204))
         assertNull(CanaryHttpCallPolicy.request("control_http", "https://example.test/").header("Connection"))
+        assertNull(CanaryHttpCallPolicy.request("http_domain", "https://example.test/").header("Range"))
         assertFalse(CanaryHttpCallPolicy.isSuccessfulResponse("http_domain", 403))
+    }
+
+    @Test
+    fun lightRunControlFixtureStaysBelowAccountingCap() {
+        val fixtureTraffic = CanaryTrafficSample(bytesTx = 4_500L, bytesRx = 24_500L)
+        val summary = CanaryRunVerdictDeriver.deriveLight(
+            results = List(5) {
+                CanaryTestResult(
+                    testType = "control_http",
+                    target = "control-$it.example",
+                    success = true,
+                    errorCategory = CanaryErrorCategory.NONE,
+                    httpStatus = 403
+                )
+            },
+            runTraffic = fixtureTraffic
+        )
+
+        assertTrue(summary.bytesRx!! < 30 * 1024)
+    }
+
+    @Test
+    fun controlResponseClosesAfterHeadersWithoutReadingBodyBytes() {
+        val body = ThrowingReadBody()
+        val response = Response.Builder()
+            .request(Request.Builder().url("https://example.test/").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(451)
+            .message("Unavailable")
+            .body(body)
+            .build()
+
+        assertEquals(451, CanaryHttpCallPolicy.closeAfterHeaders(response))
+        assertTrue(body.closed)
+        assertFalse(body.sourceRequested)
     }
 
     @Test
@@ -87,5 +130,23 @@ class CanaryHttpCallPolicyTest {
 
     private companion object {
         val UUID_REGEX = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+    }
+}
+
+private class ThrowingReadBody : ResponseBody() {
+    var closed = false
+    var sourceRequested = false
+
+    override fun contentLength(): Long = 1024
+
+    override fun contentType(): MediaType? = null
+
+    override fun source(): BufferedSource {
+        sourceRequested = true
+        throw IOException("body must not be read")
+    }
+
+    override fun close() {
+        closed = true
     }
 }

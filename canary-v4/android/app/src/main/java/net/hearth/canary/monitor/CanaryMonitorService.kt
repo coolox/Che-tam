@@ -12,11 +12,19 @@ import android.os.IBinder
 import android.os.Looper
 import net.hearth.canary.MainActivity
 import net.hearth.canary.R
+import net.hearth.canary.full.CanaryFullRunExecutor
+import net.hearth.canary.full.CanaryNightlyJournalPlanner
+import net.hearth.canary.full.CanaryRunKind
+import net.hearth.canary.full.CanaryRunPlanner
+import net.hearth.canary.full.CanaryTrafficBudget
 import net.hearth.canary.light.CanaryLightRunExecutor
 import net.hearth.canary.light.CanaryRunVerdictDeriver
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 class CanaryMonitorService : Service() {
     private val handler = Handler(Looper.getMainLooper())
@@ -25,6 +33,8 @@ class CanaryMonitorService : Service() {
     }
     private var eventLog: CanaryEventLog? = null
     private var lightRunExecutor: CanaryLightRunExecutor? = null
+    private var fullRunExecutor: CanaryFullRunExecutor? = null
+    private var trafficBudget: CanaryTrafficBudget? = null
 
     private val cadenceRunnable = object : Runnable {
         override fun run() {
@@ -49,6 +59,8 @@ class CanaryMonitorService : Service() {
         }
         protect("service_on_create_executor") {
             lightRunExecutor = CanaryLightRunExecutor(this)
+            fullRunExecutor = CanaryFullRunExecutor(this, CanaryEventJournal(CanaryEventDatabase.get(this).eventDao()))
+            trafficBudget = CanaryTrafficBudget(this)
         }
         protect("service_on_create_notification_channel") {
             createNotificationChannel()
@@ -151,13 +163,62 @@ class CanaryMonitorService : Service() {
                     appendCycleStart(fields)
                 }
                 val lightRun = requireNotNull(lightRunExecutor) { "Light run executor is not initialized" }.run()
-                val results = lightRun.results.map { result ->
+                val lightResults = lightRun.results.map { result ->
                     result.copy(networkType = fields?.networkType ?: "unknown")
                 }
-                results.forEach { result ->
+                lightResults.forEach { result ->
                     appendLightRunRecord(runId, result)
                 }
-                appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(results, lightRun.traffic))
+                if (shouldRunFull(wakeupMethod, scheduledAt)) {
+                    val budget = requireNotNull(trafficBudget) { "Traffic budget is not initialized" }
+                    if (budget.canRunHeavy()) {
+                        val nightlyDecision = shouldAttemptNightlyJournalUpload(System.currentTimeMillis())
+                        val includeJournalUpload = nightlyDecision.shouldAttempt
+                        val includeDailyUpload = CanaryUploadDecision.includeDailyPayload(System.currentTimeMillis())
+                        val fullResults = requireNotNull(fullRunExecutor) { "Full run executor is not initialized" }
+                            .run(
+                                includeUploads = true,
+                                includeDailyUpload = includeDailyUpload,
+                                includeJournalUpload = includeJournalUpload
+                            )
+                            .map { result -> result.copy(networkType = result.networkType ?: fields?.networkType ?: "unknown") }
+                        if (includeJournalUpload && fullResults.any { it.testType == "journal_upload" && it.success }) {
+                            markNightlyJournalUploadSucceeded(nightlyDecision.localDay)
+                        }
+                        fullResults.forEach { result ->
+                            appendLightRunRecord(runId, result)
+                        }
+                        val serverBytes = fullResults.sumOf { (it.payloadBytes ?: 0).toLong().coerceAtLeast(0L) }
+                        budget.addServerBytes(serverBytes)
+                        val fullSummary = CanaryRunVerdictDeriver.deriveLight(lightResults + fullResults, lightRun.traffic).let {
+                            it.copy(bytesTx = ((it.bytesTx ?: 0L) + serverBytes).coerceAtLeast(0L))
+                        }
+                        appendRunSummary(
+                            runId,
+                            fullSummary,
+                            CanaryRunKind.FULL.wireValue
+                        )
+                    } else {
+                        if (budget.markPauseEmitted()) {
+                            appendLightRunRecord(
+                                runId,
+                                net.hearth.canary.light.CanaryTestResult(
+                                    testType = "budget_paused",
+                                    target = CanaryLightRunExecutor.SERVER_HOST,
+                                    success = false,
+                                    errorCategory = net.hearth.canary.light.CanaryErrorCategory.OTHER,
+                                    errorDetail = "Daily server budget reached",
+                                    bytesToday = budget.bytesToday(),
+                                    networkType = fields?.networkType ?: "unknown",
+                                    runKind = CanaryRunKind.FULL.wireValue
+                                )
+                            )
+                        }
+                        appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(lightResults, lightRun.traffic))
+                    }
+                } else {
+                    appendRunSummary(runId, CanaryRunVerdictDeriver.deriveLight(lightResults, lightRun.traffic))
+                }
             } catch (throwable: Throwable) {
                 appendCycleError("run_cycle_body", throwable)
             } finally {
@@ -205,6 +266,31 @@ class CanaryMonitorService : Service() {
     private fun appendRunSummary(runId: String, summary: net.hearth.canary.light.CanaryRunSummary) {
         runCatching { ensureEventLog().appendRunSummary(runId, summary) }
             .onFailure { appendCycleError("journal_run_summary", it) }
+    }
+
+    private fun appendRunSummary(runId: String, summary: net.hearth.canary.light.CanaryRunSummary, runKind: String) {
+        runCatching { ensureEventLog().appendRunSummary(runId, summary, runKind) }
+            .onFailure { appendCycleError("journal_run_summary", it) }
+    }
+
+    private fun shouldRunFull(wakeupMethod: String, scheduledAt: Long): Boolean =
+        wakeupMethod == CanaryWakeupMethod.MANUAL_FULL ||
+            CanaryRunPlanner.kindForSlot(scheduledAt) == CanaryRunKind.FULL
+
+    private fun shouldAttemptNightlyJournalUpload(nowMs: Long): net.hearth.canary.full.CanaryNightlyJournalDecision {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        return CanaryNightlyJournalPlanner.decide(
+            nowMs = nowMs,
+            zoneId = ZoneId.systemDefault(),
+            lastAttemptDay = prefs.getString(KEY_LAST_NIGHTLY_JOURNAL_SUCCESS_DAY, null),
+            jitterProvider = CanaryNightlyJournalPlanner::deterministicJitterMinutes
+        )
+    }
+
+    private fun markNightlyJournalUploadSucceeded(localDay: String) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_LAST_NIGHTLY_JOURNAL_SUCCESS_DAY, localDay)
+            .apply()
     }
 
     private fun appendCycleError(phase: String, throwable: Throwable) {
@@ -274,5 +360,11 @@ class CanaryMonitorService : Service() {
         private const val NOTIFICATION_CHANNEL_ID = "canary_monitor"
         private const val PREFS_NAME = "canary_monitor"
         private const val KEY_LAST_SCHEDULED_AT = "lastScheduledAt"
+        private const val KEY_LAST_NIGHTLY_JOURNAL_SUCCESS_DAY = "lastNightlyJournalSuccessDay"
     }
+}
+
+private object CanaryUploadDecision {
+    fun includeDailyPayload(epochMs: Long): Boolean =
+        Instant.ofEpochMilli(epochMs).atZone(ZoneOffset.UTC).hour == 0
 }

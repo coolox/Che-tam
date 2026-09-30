@@ -38,7 +38,12 @@ val canaryApiKey = localSecretProperty("canary.apiKey", "CANARY_API_KEY", "X_CAN
 
 gradle.taskGraph.whenReady {
     val requestsReleaseOutput = allTasks.any { task ->
-        task.name.contains("Release", ignoreCase = false)
+        task.name in setOf(
+            "assembleRelease",
+            "bundleRelease",
+            "packageRelease",
+            "packageReleaseBundle"
+        )
     }
 
     if (requestsReleaseOutput && !hasReleaseSigningProperties) {
@@ -58,6 +63,12 @@ gradle.taskGraph.whenReady {
             "Release TLS pin configuration is incomplete: missing or blank 'canary.tlsPinSha256.2'/'CANARY_TLS_PIN_SHA256_2' in local secrets.properties."
         )
     }
+
+    if (requestsReleaseOutput && canaryApiKey.isBlank()) {
+        throw GradleException(
+            "Release Canary API key configuration is incomplete: missing or blank 'canary.apiKey'/'CANARY_API_KEY'/'X_CANARY_KEY' in local secrets.properties."
+        )
+    }
 }
 
 android {
@@ -68,8 +79,8 @@ android {
         applicationId = "net.hearth.canary.v4"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40100
-        versionName = "4.1.0"
+        versionCode = 40101
+        versionName = "4.1.1"
     }
 
     compileOptions {

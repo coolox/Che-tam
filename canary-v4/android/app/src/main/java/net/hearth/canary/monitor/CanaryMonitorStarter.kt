@@ -9,6 +9,10 @@ object CanaryMonitorStarter {
         startService(context, CanaryWakeupMethod.MANUAL)
     }
 
+    fun startFromManualFull(context: Context) {
+        startService(context, CanaryWakeupMethod.MANUAL_FULL)
+    }
+
     fun startFromAlarm(context: Context) {
         startService(context, CanaryWakeupMethod.ALARM)
     }
@@ -43,4 +47,5 @@ object CanaryWakeupMethod {
     const val ALARM = "alarm"
     const val BOOT = "boot"
     const val MANUAL = "manual"
+    const val MANUAL_FULL = "manual_full"
 }

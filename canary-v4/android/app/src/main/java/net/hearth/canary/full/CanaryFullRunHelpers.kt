@@ -2,8 +2,14 @@ package net.hearth.canary.full
 
 import net.hearth.canary.light.CanaryAddressClassifier
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.net.InetAddress
 import java.security.MessageDigest
+import java.security.SecureRandom
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.util.zip.CRC32
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -39,6 +45,40 @@ object CanaryLatencyStats {
             lost = (attempted - sorted.size).coerceAtLeast(0)
         )
     }
+}
+
+data class CanaryNightlyJournalDecision(
+    val shouldAttempt: Boolean,
+    val localDay: String,
+    val scheduledAtMs: Long
+)
+
+object CanaryNightlyJournalPlanner {
+    private const val WINDOW_MINUTES = 30
+
+    fun decide(nowMs: Long, zoneId: ZoneId, lastAttemptDay: String?, jitterProvider: (String) -> Int): CanaryNightlyJournalDecision {
+        val local = Instant.ofEpochMilli(nowMs).atZone(zoneId)
+        val localDay = local.toLocalDate().toString()
+        val scheduledAt = scheduledAtMs(LocalDate.parse(localDay), zoneId, jitterProvider(localDay))
+        return CanaryNightlyJournalDecision(
+            shouldAttempt = lastAttemptDay != localDay && nowMs >= scheduledAt,
+            localDay = localDay,
+            scheduledAtMs = scheduledAt
+        )
+    }
+
+    fun deterministicJitterMinutes(localDay: String): Int {
+        val crc = CRC32()
+        crc.update(localDay.toByteArray(Charsets.UTF_8))
+        return (crc.value % (WINDOW_MINUTES + 1)).toInt()
+    }
+
+    private fun scheduledAtMs(day: LocalDate, zoneId: ZoneId, jitterMinutes: Int): Long =
+        day.atTime(3, 0)
+            .plusMinutes(jitterMinutes.coerceIn(0, WINDOW_MINUTES).toLong())
+            .atZone(zoneId)
+            .toInstant()
+            .toEpochMilli()
 }
 
 data class LatencyAggregate(
@@ -80,6 +120,12 @@ object CanarySecretScrubber {
 
 object CanaryTurnMessage {
     const val MAGIC_COOKIE = 0x2112A442
+    const val METHOD_ALLOCATE = 0x0003
+    const val METHOD_CREATE_PERMISSION = 0x0008
+    const val METHOD_SEND = 0x0016
+    const val METHOD_DATA = 0x0017
+    const val CLASS_SUCCESS = 0x0100
+    const val CLASS_ERROR = 0x0110
     const val ATTR_USERNAME = 0x0006
     const val ATTR_MESSAGE_INTEGRITY = 0x0008
     const val ATTR_ERROR_CODE = 0x0009
@@ -89,6 +135,47 @@ object CanaryTurnMessage {
     const val ATTR_REQUESTED_TRANSPORT = 0x0019
     const val ATTR_LIFETIME = 0x000D
     const val ATTR_DATA = 0x0013
+    private const val REQUESTED_TRANSPORT_UDP = 17 shl 24
+    private val random = SecureRandom()
+
+    fun allocateChallenge(transactionId: ByteArray = transactionId()): ByteArray =
+        build(METHOD_ALLOCATE, transactionId, listOf(u32Attribute(ATTR_REQUESTED_TRANSPORT, REQUESTED_TRANSPORT_UDP)))
+
+    fun allocateAuthenticated(username: String, realm: String, nonce: String, password: String, transactionId: ByteArray = transactionId()): ByteArray =
+        buildAuthenticated(
+            METHOD_ALLOCATE,
+            transactionId,
+            username,
+            realm,
+            nonce,
+            password,
+            listOf(u32Attribute(ATTR_REQUESTED_TRANSPORT, REQUESTED_TRANSPORT_UDP))
+        )
+
+    fun createPermission(username: String, realm: String, nonce: String, password: String, peerHost: String, peerPort: Int, transactionId: ByteArray = transactionId()): ByteArray =
+        buildAuthenticated(
+            METHOD_CREATE_PERMISSION,
+            transactionId,
+            username,
+            realm,
+            nonce,
+            password,
+            listOf(xorPeerAddress(peerHost, peerPort))
+        )
+
+    fun sendIndication(peerHost: String, peerPort: Int, payload: ByteArray, transactionId: ByteArray = transactionId()): ByteArray =
+        build(
+            METHOD_SEND,
+            transactionId,
+            listOf(xorPeerAddress(peerHost, peerPort), attribute(ATTR_DATA, payload))
+        )
+
+    fun type(message: ByteArray): Int? =
+        if (message.size >= 2) u16(message, 0) else null
+
+    fun isSuccess(message: ByteArray, method: Int): Boolean = type(message) == (CLASS_SUCCESS or method)
+
+    fun isError(message: ByteArray, method: Int): Boolean = type(message) == (CLASS_ERROR or method)
 
     fun longTermKey(username: String, realm: String, password: String): ByteArray {
         val digest = MessageDigest.getInstance("MD5")
@@ -134,8 +221,87 @@ object CanaryTurnMessage {
         return out
     }
 
+    private fun buildAuthenticated(
+        type: Int,
+        transactionId: ByteArray,
+        username: String,
+        realm: String,
+        nonce: String,
+        password: String,
+        attrs: List<StunAttribute>
+    ): ByteArray {
+        val authAttrs = attrs + listOf(
+            attribute(ATTR_USERNAME, username.toByteArray(Charsets.UTF_8)),
+            attribute(ATTR_REALM, realm.toByteArray(Charsets.UTF_8)),
+            attribute(ATTR_NONCE, nonce.toByteArray(Charsets.UTF_8))
+        )
+        val withoutIntegrity = build(type, transactionId, authAttrs, extraLength = 24)
+        val hmac = hmacSha1(longTermKey(username, realm, password), withoutIntegrity)
+        return build(type, transactionId, authAttrs + attribute(ATTR_MESSAGE_INTEGRITY, hmac))
+    }
+
+    private fun build(type: Int, transactionId: ByteArray, attrs: List<StunAttribute>, extraLength: Int = 0): ByteArray {
+        require(transactionId.size == 12) { "STUN transaction id must be 12 bytes." }
+        val body = ByteArrayOutputStream()
+        attrs.forEach { attr ->
+            writeU16(body, attr.type)
+            writeU16(body, attr.value.size)
+            body.write(attr.value)
+            repeat(padding(attr.value.size)) { body.write(0) }
+        }
+        val bodyBytes = body.toByteArray()
+        val out = ByteArrayOutputStream()
+        writeU16(out, type)
+        writeU16(out, bodyBytes.size + extraLength)
+        writeU32(out, MAGIC_COOKIE)
+        out.write(transactionId)
+        out.write(bodyBytes)
+        return out.toByteArray()
+    }
+
+    private fun attribute(type: Int, value: ByteArray): StunAttribute = StunAttribute(type, value)
+
+    private fun u32Attribute(type: Int, value: Int): StunAttribute {
+        val out = ByteArrayOutputStream()
+        writeU32(out, value)
+        return attribute(type, out.toByteArray())
+    }
+
+    private fun xorPeerAddress(host: String, port: Int): StunAttribute {
+        val address = InetAddress.getByName(host).address
+        require(address.size == 4) { "Only IPv4 TURN echo peer is supported." }
+        val out = ByteArrayOutputStream()
+        out.write(0)
+        out.write(0x01)
+        writeU16(out, port xor (MAGIC_COOKIE ushr 16))
+        val cookie = byteArrayOf(
+            ((MAGIC_COOKIE ushr 24) and 0xff).toByte(),
+            ((MAGIC_COOKIE ushr 16) and 0xff).toByte(),
+            ((MAGIC_COOKIE ushr 8) and 0xff).toByte(),
+            (MAGIC_COOKIE and 0xff).toByte()
+        )
+        address.forEachIndexed { index, byte -> out.write(byte.toInt() xor cookie[index].toInt()) }
+        return attribute(ATTR_XOR_PEER_ADDRESS, out.toByteArray())
+    }
+
+    private fun transactionId(): ByteArray = ByteArray(12).also(random::nextBytes)
+
+    private fun padding(size: Int): Int = (4 - (size % 4)) % 4
+
     private fun u16(bytes: ByteArray, offset: Int): Int =
         ((bytes[offset].toInt() and 0xff) shl 8) or (bytes[offset + 1].toInt() and 0xff)
+
+    private fun writeU16(out: ByteArrayOutputStream, value: Int) {
+        out.write((value ushr 8) and 0xff)
+        out.write(value and 0xff)
+    }
+
+    private fun writeU32(out: ByteArrayOutputStream, value: Int) {
+        out.write((value ushr 24) and 0xff)
+        out.write((value ushr 16) and 0xff)
+        out.write((value ushr 8) and 0xff)
+        out.write(value and 0xff)
+    }
 }
 
 data class StunAttribute(val type: Int, val value: ByteArray)

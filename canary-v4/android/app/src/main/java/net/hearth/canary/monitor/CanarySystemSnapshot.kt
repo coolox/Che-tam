@@ -73,7 +73,8 @@ object CanarySystemSnapshot {
             processStartedAt = processStartedAt,
             networkType = networkSnapshot.networkType,
             wifiRssi = networkSnapshot.wifiRssi,
-            wifiLinkMbps = networkSnapshot.wifiLinkMbps
+            wifiLinkMbps = networkSnapshot.wifiLinkMbps,
+            gmsAvailable = isPackageAvailable(context, "com.google.android.gms")
         )
     }
 
@@ -118,6 +119,12 @@ object CanarySystemSnapshot {
             screenOn = powerManager?.isInteractive
         )
     }
+
+    internal fun isPackageAvailable(context: Context, packageName: String): Boolean =
+        runCatching {
+            context.packageManager.getPackageInfo(packageName, 0)
+            true
+        }.getOrDefault(false)
 }
 
 internal data class NetworkSnapshot(

@@ -115,7 +115,8 @@ class CanaryEventJournalTest {
                 processStartedAt = 1_799_999_900_000L,
                 networkType = "wifi",
                 wifiRssi = -55,
-                wifiLinkMbps = 144
+                wifiLinkMbps = 144,
+                gmsAvailable = true
             )
         )
 
@@ -129,6 +130,7 @@ class CanaryEventJournalTest {
         assertEquals(false, payload.getBoolean("deviceIdleMode"))
         assertEquals(false, payload.getBoolean("powerSaveMode"))
         assertEquals(10, payload.getInt("appStandbyBucket"))
+        assertTrue(payload.getBoolean("gmsAvailable"))
     }
 
     @Test
