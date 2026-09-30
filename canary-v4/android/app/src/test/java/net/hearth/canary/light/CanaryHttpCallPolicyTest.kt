@@ -4,6 +4,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -43,19 +44,48 @@ class CanaryHttpCallPolicyTest {
     }
 
     @Test
-    fun requestUsesUnknownDeviceLabelFallbackWhenHeaderValueIsUnsafe() {
-        val request = CanaryHttpCallPolicy.request("control_http", "https://example.test/", "\n")
+    fun httpRequestsCarrySafeDeviceLabelForControlAndServerChecks() {
+        val control = CanaryHttpCallPolicy.request("control_http", "https://example.test/", "tm-1")
+        val server = CanaryHttpCallPolicy.request("http_domain", "https://example.test/", "tm-1")
+
+        assertEquals("tm-1", control.header("X-Canary-Device-Label"))
+        assertEquals("tm-1", server.header("X-Canary-Device-Label"))
+    }
+
+    @Test
+    fun requestUsesUnknownDeviceLabelFallbackWhenHeaderValueIsMissingOrUnsafe() {
+        val invalid = CanaryHttpCallPolicy.request("http_domain", "https://example.test/", "\n")
+
+        assertEquals("unknown", CanaryCorrelation.safeDeviceLabel(null))
+        assertEquals("unknown", invalid.header("X-Canary-Device-Label"))
+    }
+
+    @Test
+    fun websocketRequestCarriesSafeDeviceLabelAndExactGeneratedConnectionId() {
+        val connectionId = CanaryCorrelation.newConnectionId()
+        val request = CanaryCorrelation.websocketRequest("wss://example.test/hearth-canary/", "tm-1", connectionId)
+
+        assertTrue(UUID_REGEX.matches(connectionId))
+        assertEquals("tm-1", request.header("X-Canary-Device-Label"))
+        assertEquals(connectionId, request.header("X-Canary-Connection-Id"))
+        assertEquals(connectionId, CanaryCorrelation.keepaliveResultConnectionId(connectionId))
+        assertEquals(connectionId, CanaryCorrelation.keepaliveResultConnectionId(connectionId))
+        assertNotEquals(connectionId, CanaryCorrelation.keepaliveResultConnectionId(null))
+        assertTrue(UUID_REGEX.matches(CanaryCorrelation.keepaliveResultConnectionId(null)))
+    }
+
+    @Test
+    fun websocketRequestUsesUnknownDeviceLabelFallbackWhenHeaderValueIsUnsafe() {
+        val request = CanaryCorrelation.websocketRequest(
+            "wss://example.test/hearth-canary/",
+            "\r\n",
+            "123e4567-e89b-12d3-a456-426614174000"
+        )
 
         assertEquals("unknown", request.header("X-Canary-Device-Label"))
     }
 
-    @Test
-    fun websocketRequestCarriesDeviceLabelAndExactConnectionId() {
-        val connectionId = "123e4567-e89b-12d3-a456-426614174000"
-        val request = CanaryCorrelation.websocketRequest("wss://example.test/hearth-canary/", "tm-1", connectionId)
-
-        assertEquals("tm-1", request.header("X-Canary-Device-Label"))
-        assertEquals(connectionId, request.header("X-Canary-Connection-Id"))
-        assertEquals(connectionId, CanaryCorrelation.keepaliveResultConnectionId(connectionId))
+    private companion object {
+        val UUID_REGEX = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
     }
 }
