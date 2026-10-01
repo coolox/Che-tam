@@ -19,9 +19,11 @@ Read `AGENTS.md`, existing v4.1.2 Android code/tests, `canary-v4/server/src/turn
 - Ensure provider names are set for every success/failure record. Correct Quad9 endpoint/content route under RFC8484.
 - Add tests for query encoding and deterministic DNS wire response parsing; test all configured providers URL/accept policy.
 
-3. **Heartbeat status records**
+3. **Heartbeat status, death fields and one-hour diagnostic**
 - Every full run records exactly one `ws_heartbeat_status` for each 60/240/540-sec persistent heartbeat connection: `intervalSec`, `alive`, `ageSec`, `pingsSent`, `pongsMissed`; network context where available.
-- Preserve `ws_heartbeat_dead` only for actual death/probe failure, without fabricating failures. Add focused model/helper tests for all 3 status records and state transitions.
+- Preserve `ws_heartbeat_dead` only for actual death/probe failure, without fabricating failures. Every real death record must include `intervalSec`, `ageSec`, safe close/failure reason, `screenOn`, `deviceIdleMode`, `networkType` when available, plus existing connection correlation fields.
+- Make the roughly one-hour disconnect diagnosable: on every heartbeat close/failure, capture the safe local evidence already available at that instant (callback/probe detector, close code or exception class, last inbound/outbound/ping/pong timing as available). Do not invent a cause or add server-side pings. Ensure server `canary_ws_close` retains safe duration/last-frame/correlation fields so client/server records can be correlated.
+- Add focused model/helper tests for all 3 status records, death payload fields and state transitions.
 
 4. **IP direct protocol field**
 - Add serialized `protocol` to `ip_direct` result records: exactly `http` or `ws` (not ambiguous generic mode); retain SNI/mode compatibility. Tests verify both entries.
