@@ -1,5 +1,12 @@
 package net.hearth.canary.monitor
 
+import net.hearth.canary.full.CanaryServiceReachExecutor
+import net.hearth.canary.full.CanaryServiceReachTransport
+import net.hearth.canary.full.CanaryTlsReachTiming
+import net.hearth.canary.ui.CanaryExportDeviceMetadata
+import net.hearth.canary.ui.CanaryJournalExportFormatter
+import net.hearth.canary.ui.CanaryJournalRecord
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -374,6 +381,8 @@ class CanaryEventJournalTest {
                 host = "www.google.com",
                 port = 443,
                 protocol = "tls",
+                mode = "tls",
+                certTrusted = true,
                 tcpMs = 12,
                 tlsMs = 34
             )
@@ -383,8 +392,66 @@ class CanaryEventJournalTest {
         assertEquals("www.google.com", payload.getString("host"))
         assertEquals(443, payload.getInt("port"))
         assertEquals("tls", payload.getString("protocol"))
+        assertEquals("tls", payload.getString("mode"))
+        assertTrue(payload.getBoolean("certTrusted"))
         assertEquals(12L, payload.getLong("tcpMs"))
         assertEquals(34L, payload.getLong("tlsMs"))
+    }
+
+    @Test
+    fun manualServiceReachCoordinatorPersistsResultsWithOneRunIdAndExportedFields() {
+        val dao = FakeCanaryEventDao()
+        val journal = CanaryEventJournal(dao) { CanaryEventJournal.RETENTION_MS + 1L }
+        val executor = CanaryServiceReachExecutor(
+            transport = object : CanaryServiceReachTransport {
+                override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+                    CanaryTlsReachTiming(tcpMs = 10, tlsMs = 20)
+
+                override fun tlsHandshakeAnyCert(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+                    CanaryTlsReachTiming(tcpMs = 11, tlsMs = 21, certTrusted = false)
+
+                override fun tcpConnect(host: String, port: Int, timeoutMs: Int): Long = 12
+
+                override fun stunBinding(host: String, port: Int, request: ByteArray, transactionId: ByteArray, timeoutMs: Int): Long = 13
+            }
+        )
+
+        val results = CanaryManualServiceReachCoordinator(
+            executor = executor,
+            journal = journal,
+            runIdFactory = { "manual-run-1" }
+        ).runAndPersist()
+        val export = JSONObject(
+            CanaryJournalExportFormatter.buildExportJson(
+                exportedAtUtc = 3_000_000_000_100L,
+                appVersion = "4.1.4",
+                deviceLabel = "test-device",
+                deviceMetadata = CanaryExportDeviceMetadata("", "", ""),
+                records = journal.oldestFirst(Int.MAX_VALUE).map { CanaryJournalRecord(it.timestampUtc, it.payloadJson) }
+            )
+        )
+        val records = export.getJSONArray("records").serviceReachRecords()
+
+        assertEquals(results.size, records.length())
+        assertTrue(records.length() > 0)
+        repeat(records.length()) { index ->
+            val record = records.getJSONObject(index)
+            assertEquals("manual-run-1", record.getString("runId"))
+            assertEquals("service_reach", record.getString("testType"))
+            assertTrue(record.has("service"))
+            assertTrue(record.has("host"))
+            assertTrue(record.has("port"))
+            assertTrue(record.has("protocol"))
+            assertTrue(record.has("mode"))
+            assertTrue(record.has("success"))
+            assertTrue(record.has("errorCategory"))
+            assertTrue(record.has("errorDetail"))
+            assertTrue(record.has("tcpMs"))
+            assertTrue(record.has("tlsMs"))
+            assertTrue(record.has("udpMs"))
+            assertTrue(record.has("certTrusted"))
+        }
+        assertEquals(1, (0 until records.length()).map { records.getJSONObject(it).getString("runId") }.toSet().size)
     }
 
     @Test
@@ -466,6 +533,17 @@ class CanaryEventJournalTest {
             sequence = sequence,
             payloadJson = payload(recordId, "seed")
         )
+
+    private fun JSONArray.serviceReachRecords(): JSONArray {
+        val filtered = JSONArray()
+        repeat(length()) { index ->
+            val record = getJSONObject(index)
+            if (record.getString("testType") == "service_reach") {
+                filtered.put(record)
+            }
+        }
+        return filtered
+    }
 }
 
 private class FakeCanaryEventDao : CanaryEventDao {

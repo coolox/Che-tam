@@ -18,6 +18,7 @@ import java.net.Socket
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
 import java.security.SecureRandom
+import java.security.cert.X509Certificate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
@@ -29,23 +30,43 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SNIServerName
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 data class CanaryServiceTarget(
     val service: String,
     val host: String,
     val port: Int = 443,
     val protocol: String = "tls",
-    val sniHost: String? = host
+    val sniHost: String? = host,
+    val mode: CanaryServiceReachMode = CanaryServiceReachMode.TLS
 ) {
     val target: String = "$host:$port"
 }
 
+enum class CanaryServiceReachMode(val wireValue: String) {
+    TLS("tls"),
+    TLS_ANY_CERT("tls_any_cert"),
+    TCP("tcp"),
+    UDP_STUN("udp_stun")
+}
+
 interface CanaryServiceReachTransport {
     fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming
+    fun tlsHandshakeAnyCert(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+        tlsHandshake(host, port, sniHost, timeoutMs)
+    fun tcpConnect(host: String, port: Int, timeoutMs: Int): Long =
+        tlsHandshake(host, port, host, timeoutMs).tcpMs
     fun stunBinding(host: String, port: Int, request: ByteArray, transactionId: ByteArray, timeoutMs: Int): Long
 }
 
-data class CanaryTlsReachTiming(val tcpMs: Long, val tlsMs: Long)
+data class CanaryTlsReachTiming(
+    val tcpMs: Long,
+    val tlsMs: Long,
+    val certTrusted: Boolean = true
+)
 
 class CanaryServiceReachExecutor(
     private val clock: () -> Long = System::currentTimeMillis,
@@ -79,16 +100,27 @@ class CanaryServiceReachExecutor(
         }
 
     private fun serviceReachResults(): List<CanaryTestResult> =
-        CanaryServiceReachCatalog.targets.map { target -> tlsResult("service_reach", target) } +
+        CanaryServiceReachCatalog.targets.map { target -> reachResult("service_reach", target) } +
             CanaryServiceReachCatalog.stunTargets.map { target -> stunResult(target) }
 
     private fun apnsReachResults(): List<CanaryTestResult> =
-        CanaryServiceReachCatalog.apnsTargets.map { target -> tlsResult("apns_reach", target) }
+        CanaryServiceReachCatalog.apnsTargets.map { target -> reachResult("apns_reach", target) }
+
+    private fun reachResult(testType: String, target: CanaryServiceTarget): CanaryTestResult =
+        when (target.mode) {
+            CanaryServiceReachMode.TLS, CanaryServiceReachMode.TLS_ANY_CERT -> tlsResult(testType, target)
+            CanaryServiceReachMode.TCP -> tcpResult(testType, target)
+            CanaryServiceReachMode.UDP_STUN -> stunResult(target)
+        }
 
     private fun tlsResult(testType: String, target: CanaryServiceTarget): CanaryTestResult {
         val startedAt = clock()
         return try {
-            val timing = transport.tlsHandshake(target.host, target.port, target.sniHost, timeoutMs)
+            val timing = if (target.mode == CanaryServiceReachMode.TLS_ANY_CERT) {
+                transport.tlsHandshakeAnyCert(target.host, target.port, target.sniHost, timeoutMs)
+            } else {
+                transport.tlsHandshake(target.host, target.port, target.sniHost, timeoutMs)
+            }
             CanaryTestResult(
                 testType = testType,
                 target = target.target,
@@ -98,9 +130,11 @@ class CanaryServiceReachExecutor(
                 host = target.host,
                 port = target.port,
                 protocol = target.protocol,
+                mode = target.mode.wireValue,
                 latencyMs = clock() - startedAt,
                 tcpMs = timing.tcpMs,
-                tlsMs = timing.tlsMs
+                tlsMs = timing.tlsMs,
+                certTrusted = timing.certTrusted
             )
         } catch (throwable: Throwable) {
             CanaryTestResult(
@@ -114,6 +148,42 @@ class CanaryServiceReachExecutor(
                 host = target.host,
                 port = target.port,
                 protocol = target.protocol,
+                mode = target.mode.wireValue,
+                latencyMs = clock() - startedAt
+            )
+        }
+    }
+
+    private fun tcpResult(testType: String, target: CanaryServiceTarget): CanaryTestResult {
+        val startedAt = clock()
+        return try {
+            val tcpMs = transport.tcpConnect(target.host, target.port, timeoutMs)
+            CanaryTestResult(
+                testType = testType,
+                target = target.target,
+                success = true,
+                errorCategory = CanaryErrorCategory.NONE,
+                service = target.service,
+                host = target.host,
+                port = target.port,
+                protocol = target.protocol,
+                mode = target.mode.wireValue,
+                latencyMs = clock() - startedAt,
+                tcpMs = tcpMs
+            )
+        } catch (throwable: Throwable) {
+            CanaryTestResult(
+                testType = testType,
+                target = target.target,
+                success = false,
+                errorCategory = CanaryServiceReachErrors.category(throwable),
+                errorDetail = CanarySecretScrubber.safeError(throwable.message),
+                exceptionClass = throwable.javaClass.name,
+                service = target.service,
+                host = target.host,
+                port = target.port,
+                protocol = target.protocol,
+                mode = target.mode.wireValue,
                 latencyMs = clock() - startedAt
             )
         }
@@ -133,6 +203,7 @@ class CanaryServiceReachExecutor(
                 host = target.host,
                 port = target.port,
                 protocol = target.protocol,
+                mode = target.mode.wireValue,
                 latencyMs = clock() - startedAt,
                 udpMs = udpMs
             )
@@ -141,13 +212,14 @@ class CanaryServiceReachExecutor(
                 testType = "service_reach",
                 target = target.target,
                 success = false,
-                errorCategory = CanaryServiceReachErrors.category(throwable),
+                errorCategory = CanaryServiceReachErrors.udpCategory(throwable),
                 errorDetail = CanarySecretScrubber.safeError(throwable.message),
                 exceptionClass = throwable.javaClass.name,
                 service = target.service,
                 host = target.host,
                 port = target.port,
                 protocol = target.protocol,
+                mode = target.mode.wireValue,
                 latencyMs = clock() - startedAt
             )
         }
@@ -180,8 +252,8 @@ object CanaryServiceReachCatalog {
     val appleTargets = listOf(
         CanaryServiceTarget("apple", "apps.apple.com"),
         CanaryServiceTarget("apple", "www.icloud.com"),
-        CanaryServiceTarget("apple", "1-courier.push.apple.com", 5223),
-        CanaryServiceTarget("apple", "1-courier.push.apple.com", 443)
+        CanaryServiceTarget("apple", "1-courier.push.apple.com", 5223, mode = CanaryServiceReachMode.TLS_ANY_CERT),
+        CanaryServiceTarget("apple", "1-courier.push.apple.com", 443, mode = CanaryServiceReachMode.TLS_ANY_CERT)
     )
     val messengerTargets = listOf(
         CanaryServiceTarget("messenger", "imo.im"),
@@ -189,10 +261,10 @@ object CanaryServiceReachCatalog {
         CanaryServiceTarget("messenger", "api.telegram.org"),
         CanaryServiceTarget("messenger", "149.154.167.50", 443, sniHost = null),
         CanaryServiceTarget("messenger", "web.whatsapp.com"),
-        CanaryServiceTarget("messenger", "g.whatsapp.net", 443),
-        CanaryServiceTarget("messenger", "g.whatsapp.net", 5222),
+        CanaryServiceTarget("messenger", "g.whatsapp.net", 443, "tcp", mode = CanaryServiceReachMode.TCP),
+        CanaryServiceTarget("messenger", "g.whatsapp.net", 5222, "tcp", mode = CanaryServiceReachMode.TCP),
         CanaryServiceTarget("messenger", "www.viber.com"),
-        CanaryServiceTarget("messenger", "chat.signal.org"),
+        CanaryServiceTarget("messenger", "chat.signal.org", mode = CanaryServiceReachMode.TLS_ANY_CERT),
         CanaryServiceTarget("messenger", "zoom.us"),
         CanaryServiceTarget("messenger", "teams.microsoft.com")
     )
@@ -213,12 +285,12 @@ object CanaryServiceReachCatalog {
     )
     val targets = googleTargets + appleTargets + messengerTargets + cloudTargets + otherTargets
     val stunTargets = listOf(
-        CanaryServiceTarget("stun", "stun.l.google.com", 19302, "udp_stun"),
-        CanaryServiceTarget("stun", "stun.cloudflare.com", 3478, "udp_stun")
+        CanaryServiceTarget("stun", "stun.l.google.com", 19302, "udp_stun", mode = CanaryServiceReachMode.UDP_STUN),
+        CanaryServiceTarget("stun", "stun.cloudflare.com", 3478, "udp_stun", mode = CanaryServiceReachMode.UDP_STUN)
     )
     val apnsTargets = listOf(
-        CanaryServiceTarget("apns", "1-courier.push.apple.com", 5223),
-        CanaryServiceTarget("apns", "1-courier.push.apple.com", 443),
+        CanaryServiceTarget("apns", "1-courier.push.apple.com", 5223, mode = CanaryServiceReachMode.TLS_ANY_CERT),
+        CanaryServiceTarget("apns", "1-courier.push.apple.com", 443, mode = CanaryServiceReachMode.TLS_ANY_CERT),
         CanaryServiceTarget("apns", "api.push.apple.com", 443)
     )
 }
@@ -241,6 +313,12 @@ object CanaryServiceReachErrors {
             is SocketTimeoutException, is InterruptedIOException -> CanaryErrorCategory.TCP_TIMEOUT
             is javax.net.ssl.SSLException -> CanaryErrorCategory.TLS_HANDSHAKE_ERROR
             else -> CanaryErrorCategory.OTHER
+        }
+
+    fun udpCategory(throwable: Throwable): CanaryErrorCategory =
+        when (throwable) {
+            is SocketTimeoutException, is InterruptedIOException -> CanaryErrorCategory.UDP_TIMEOUT
+            else -> CanaryErrorCategory.UDP_ERROR
         }
 }
 
@@ -298,10 +376,39 @@ class SocketCanaryServiceReachTransport internal constructor(
     ) : this(clock, JvmCanaryTlsProbeOperations(context.applicationContext))
 
     override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming {
+        return tlsHandshakeWithTrust(host, port, sniHost, timeoutMs, CanaryTlsTrustMode.NORMAL, certTrusted = true)
+    }
+
+    override fun tlsHandshakeAnyCert(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming {
+        return try {
+            tlsHandshake(host, port, sniHost, timeoutMs)
+        } catch (throwable: SSLHandshakeException) {
+            tlsHandshakeWithTrust(host, port, sniHost, timeoutMs, CanaryTlsTrustMode.ANY_CERT, certTrusted = false)
+        }
+    }
+
+    override fun tcpConnect(host: String, port: Int, timeoutMs: Int): Long {
         val deadlineStarted = clock()
-        val addresses = operations.resolve(host, port, remainingBudget(deadlineStarted, timeoutMs, "DNS"))
-        val address = addresses.firstOrNull()
-            ?: throw CanaryServiceReachDnsException("service reach DNS returned no addresses")
+        val address = resolveTarget(host, port, deadlineStarted, timeoutMs)
+        operations.openSocket().use { plain ->
+            val tcpStarted = clock()
+            val connectBudgetMs = remainingBudget(deadlineStarted, timeoutMs, "TCP")
+            plain.soTimeout = connectBudgetMs
+            operations.connect(plain, address, connectBudgetMs)
+            return clock() - tcpStarted
+        }
+    }
+
+    private fun tlsHandshakeWithTrust(
+        host: String,
+        port: Int,
+        sniHost: String?,
+        timeoutMs: Int,
+        trustMode: CanaryTlsTrustMode,
+        certTrusted: Boolean
+    ): CanaryTlsReachTiming {
+        val deadlineStarted = clock()
+        val address = resolveTarget(host, port, deadlineStarted, timeoutMs)
         operations.openSocket().use { plain ->
             val tcpStarted = clock()
             val connectBudgetMs = remainingBudget(deadlineStarted, timeoutMs, "TCP")
@@ -314,13 +421,21 @@ class SocketCanaryServiceReachTransport internal constructor(
                 host,
                 port,
                 sniHost,
-                remainingBudget(deadlineStarted, timeoutMs, "TLS")
+                remainingBudget(deadlineStarted, timeoutMs, "TLS"),
+                trustMode
             )
             if (CanaryServiceReachDeadline.remainingMs(deadlineStarted, clock(), timeoutMs) < 0) {
                 throw SocketTimeoutException("service reach TLS budget exhausted")
             }
-            return CanaryTlsReachTiming(tcpMs = tcpMs, tlsMs = clock() - tlsStarted)
+            return CanaryTlsReachTiming(tcpMs = tcpMs, tlsMs = clock() - tlsStarted, certTrusted = certTrusted)
         }
+    }
+
+    private fun resolveTarget(host: String, port: Int, deadlineStarted: Long, timeoutMs: Int): InetSocketAddress {
+        CanaryLiteralIpAddress.parse(host)?.let { return InetSocketAddress(it, port) }
+        val addresses = operations.resolve(host, port, remainingBudget(deadlineStarted, timeoutMs, "DNS"))
+        return addresses.firstOrNull()
+            ?: throw CanaryServiceReachDnsException("service reach DNS returned no addresses")
     }
 
     private fun remainingBudget(deadlineStarted: Long, timeoutMs: Int, phase: String): Int {
@@ -352,6 +467,19 @@ internal interface CanaryTlsProbeOperations {
     fun openSocket(): Socket = Socket()
     fun connect(socket: Socket, address: InetSocketAddress, timeoutMs: Int)
     fun handshake(socket: Socket, host: String, port: Int, sniHost: String?, timeoutMs: Int)
+    fun handshake(
+        socket: Socket,
+        host: String,
+        port: Int,
+        sniHost: String?,
+        timeoutMs: Int,
+        trustMode: CanaryTlsTrustMode = CanaryTlsTrustMode.NORMAL
+    ) = handshake(socket, host, port, sniHost, timeoutMs)
+}
+
+internal enum class CanaryTlsTrustMode {
+    NORMAL,
+    ANY_CERT
 }
 
 internal class JvmCanaryTlsProbeOperations(
@@ -368,7 +496,21 @@ internal class JvmCanaryTlsProbeOperations(
     }
 
     override fun handshake(socket: Socket, host: String, port: Int, sniHost: String?, timeoutMs: Int) {
-        val sslSocketFactory = SSLSocketFactory.getDefault() as SSLSocketFactory
+        handshake(socket, host, port, sniHost, timeoutMs, CanaryTlsTrustMode.NORMAL)
+    }
+
+    override fun handshake(
+        socket: Socket,
+        host: String,
+        port: Int,
+        sniHost: String?,
+        timeoutMs: Int,
+        trustMode: CanaryTlsTrustMode
+    ) {
+        val sslSocketFactory = when (trustMode) {
+            CanaryTlsTrustMode.NORMAL -> SSLSocketFactory.getDefault() as SSLSocketFactory
+            CanaryTlsTrustMode.ANY_CERT -> CanaryAnyCertSslSocketFactory.get()
+        }
         (sslSocketFactory.createSocket(socket, sniHost ?: host, port, true) as SSLSocket).use { ssl ->
             ssl.soTimeout = timeoutMs
             ssl.sslParameters = ssl.sslParameters.apply {
@@ -378,6 +520,34 @@ internal class JvmCanaryTlsProbeOperations(
                 ssl.startHandshake()
             }
         }
+    }
+}
+
+internal object CanaryAnyCertSslSocketFactory {
+    private val trustAll = object : X509TrustManager {
+        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    }
+
+    private val socketFactory: SSLSocketFactory by lazy {
+        SSLContext.getInstance("TLS").apply {
+            init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
+        }.socketFactory
+    }
+
+    fun get(): SSLSocketFactory = socketFactory
+}
+
+internal object CanaryLiteralIpAddress {
+    private val ipv4 = Regex("""\d{1,3}(\.\d{1,3}){3}""")
+    private val ipv6 = Regex("""[0-9a-fA-F:]+""")
+
+    fun parse(host: String): InetAddress? {
+        val normalized = host.trim().removePrefix("[").removeSuffix("]")
+        val literal = ipv4.matches(normalized) || (normalized.contains(":") && ipv6.matches(normalized))
+        if (!literal) return null
+        return runCatching { InetAddress.getByName(normalized) }.getOrNull()
     }
 }
 

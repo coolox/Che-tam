@@ -21,6 +21,8 @@ enum class CanaryErrorCategory(val wireValue: String) {
     WS_CLOSED("ws_closed"),
     WS_TIMEOUT("ws_timeout"),
     TURN_ERROR("turn_error"),
+    UDP_TIMEOUT("udp_timeout"),
+    UDP_ERROR("udp_error"),
     NO_NETWORK("no_network"),
     OTHER("other")
 }
@@ -87,6 +89,7 @@ data class CanaryTestResult(
     val sni: String? = null,
     val mode: String? = null,
     val protocol: String? = null,
+    val certTrusted: Boolean? = null,
     val provider: String? = null,
     val valuesMs: List<Long> = emptyList(),
     val count: Int? = null,

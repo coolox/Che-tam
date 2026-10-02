@@ -171,6 +171,7 @@ internal fun testResultPayload(runId: String, result: CanaryTestResult): JSONObj
         .putNullable("sni", result.sni)
         .putNullable("mode", result.mode)
         .putNullable("protocol", result.protocol)
+        .putNullable("certTrusted", result.certTrusted)
         .putNullable("provider", result.provider)
         .put("valuesMs", JSONArray(result.valuesMs))
         .putNullable("count", result.count)

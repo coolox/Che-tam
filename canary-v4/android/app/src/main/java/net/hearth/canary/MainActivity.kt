@@ -24,6 +24,7 @@ import android.widget.TextView
 import androidx.core.content.FileProvider
 import net.hearth.canary.monitor.CanaryEventDatabase
 import net.hearth.canary.monitor.CanaryEventJournal
+import net.hearth.canary.monitor.CanaryManualServiceReachCoordinator
 import net.hearth.canary.monitor.CanaryMonitorStarter
 import net.hearth.canary.monitor.CanaryMonitorState
 import net.hearth.canary.full.CanaryServiceReachExecutor
@@ -144,7 +145,12 @@ class MainActivity : Activity() {
             val results = runCatching {
                 CanaryServiceReachExecutor(
                     transport = SocketCanaryServiceReachTransport(applicationContext)
-                ).runServiceReach()
+                ).let { executor ->
+                    CanaryManualServiceReachCoordinator(
+                        executor = executor,
+                        journal = CanaryEventJournal(CanaryEventDatabase.get(applicationContext).eventDao())
+                    ).runAndPersist()
+                }
             }
                 .getOrElse { throwable ->
                     listOf(

@@ -79,8 +79,8 @@ android {
         applicationId = "net.hearth.canary.v4"
         minSdk = 26
         targetSdk = 35
-        versionCode = 40103
-        versionName = "4.1.3"
+        versionCode = 40104
+        versionName = "4.1.4"
     }
 
     compileOptions {

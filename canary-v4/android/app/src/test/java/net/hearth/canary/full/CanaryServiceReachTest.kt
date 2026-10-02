@@ -14,6 +14,7 @@ import java.net.DatagramSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
 import java.io.ByteArrayOutputStream
+import javax.net.ssl.SSLHandshakeException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -23,46 +24,47 @@ class CanaryServiceReachTest {
     fun serviceInventoryMatchesRequiredTargetsAndSniPolicy() {
         assertEquals(
             listOf(
-                "www.google.com:443:tls:www.google.com",
-                "play.google.com:443:tls:play.google.com",
-                "play.googleapis.com:443:tls:play.googleapis.com",
-                "mtalk.google.com:5228:tls:mtalk.google.com",
-                "fcm.googleapis.com:443:tls:fcm.googleapis.com",
-                "firebaseinstallations.googleapis.com:443:tls:firebaseinstallations.googleapis.com",
-                "www.gstatic.com:443:tls:www.gstatic.com",
-                "www.youtube.com:443:tls:www.youtube.com",
-                "apps.apple.com:443:tls:apps.apple.com",
-                "www.icloud.com:443:tls:www.icloud.com",
-                "1-courier.push.apple.com:5223:tls:1-courier.push.apple.com",
-                "1-courier.push.apple.com:443:tls:1-courier.push.apple.com",
-                "imo.im:443:tls:imo.im",
-                "web.telegram.org:443:tls:web.telegram.org",
-                "api.telegram.org:443:tls:api.telegram.org",
-                "149.154.167.50:443:tls:null",
-                "web.whatsapp.com:443:tls:web.whatsapp.com",
-                "g.whatsapp.net:443:tls:g.whatsapp.net",
-                "g.whatsapp.net:5222:tls:g.whatsapp.net",
-                "www.viber.com:443:tls:www.viber.com",
-                "chat.signal.org:443:tls:chat.signal.org",
-                "zoom.us:443:tls:zoom.us",
-                "teams.microsoft.com:443:tls:teams.microsoft.com",
-                "s3.amazonaws.com:443:tls:s3.amazonaws.com",
-                "storage.googleapis.com:443:tls:storage.googleapis.com",
-                "www.cloudflare.com:443:tls:www.cloudflare.com",
-                "azure.microsoft.com:443:tls:azure.microsoft.com",
-                "www.hetzner.com:443:tls:www.hetzner.com",
-                "www.digitalocean.com:443:tls:www.digitalocean.com",
-                "www.instagram.com:443:tls:www.instagram.com",
-                "www.tiktok.com:443:tls:www.tiktok.com",
-                "vk.com:443:tls:vk.com",
-                "ok.ru:443:tls:ok.ru",
-                "mail.ru:443:tls:mail.ru"
+                "www.google.com:443:tls:www.google.com:tls",
+                "play.google.com:443:tls:play.google.com:tls",
+                "play.googleapis.com:443:tls:play.googleapis.com:tls",
+                "mtalk.google.com:5228:tls:mtalk.google.com:tls",
+                "fcm.googleapis.com:443:tls:fcm.googleapis.com:tls",
+                "firebaseinstallations.googleapis.com:443:tls:firebaseinstallations.googleapis.com:tls",
+                "www.gstatic.com:443:tls:www.gstatic.com:tls",
+                "www.youtube.com:443:tls:www.youtube.com:tls",
+                "apps.apple.com:443:tls:apps.apple.com:tls",
+                "www.icloud.com:443:tls:www.icloud.com:tls",
+                "1-courier.push.apple.com:5223:tls:1-courier.push.apple.com:tls_any_cert",
+                "1-courier.push.apple.com:443:tls:1-courier.push.apple.com:tls_any_cert",
+                "imo.im:443:tls:imo.im:tls",
+                "web.telegram.org:443:tls:web.telegram.org:tls",
+                "api.telegram.org:443:tls:api.telegram.org:tls",
+                "149.154.167.50:443:tls:null:tls",
+                "web.whatsapp.com:443:tls:web.whatsapp.com:tls",
+                "g.whatsapp.net:443:tcp:g.whatsapp.net:tcp",
+                "g.whatsapp.net:5222:tcp:g.whatsapp.net:tcp",
+                "www.viber.com:443:tls:www.viber.com:tls",
+                "chat.signal.org:443:tls:chat.signal.org:tls_any_cert",
+                "zoom.us:443:tls:zoom.us:tls",
+                "teams.microsoft.com:443:tls:teams.microsoft.com:tls",
+                "s3.amazonaws.com:443:tls:s3.amazonaws.com:tls",
+                "storage.googleapis.com:443:tls:storage.googleapis.com:tls",
+                "www.cloudflare.com:443:tls:www.cloudflare.com:tls",
+                "azure.microsoft.com:443:tls:azure.microsoft.com:tls",
+                "www.hetzner.com:443:tls:www.hetzner.com:tls",
+                "www.digitalocean.com:443:tls:www.digitalocean.com:tls",
+                "www.instagram.com:443:tls:www.instagram.com:tls",
+                "www.tiktok.com:443:tls:www.tiktok.com:tls",
+                "vk.com:443:tls:vk.com:tls",
+                "ok.ru:443:tls:ok.ru:tls",
+                "mail.ru:443:tls:mail.ru:tls"
             ),
-            CanaryServiceReachCatalog.targets.map { "${it.host}:${it.port}:${it.protocol}:${it.sniHost}" }
+            CanaryServiceReachCatalog.targets.map { "${it.host}:${it.port}:${it.protocol}:${it.sniHost}:${it.mode.wireValue}" }
         )
         assertNull(CanaryServiceReachCatalog.targets.single { it.host == "149.154.167.50" }.sniHost)
         assertEquals(listOf(5223, 443, 443), CanaryServiceReachCatalog.apnsTargets.map { it.port })
-        assertEquals(listOf("udp_stun", "udp_stun"), CanaryServiceReachCatalog.stunTargets.map { it.protocol })
+        assertEquals(listOf("tls_any_cert", "tls_any_cert", "tls"), CanaryServiceReachCatalog.apnsTargets.map { it.mode.wireValue })
+        assertEquals(listOf("udp_stun", "udp_stun"), CanaryServiceReachCatalog.stunTargets.map { it.mode.wireValue })
     }
 
     @Test
@@ -90,13 +92,124 @@ class CanaryServiceReachTest {
         assertEquals("service_reach", tls.testType)
         assertEquals("google", tls.service)
         assertEquals("tls", tls.protocol)
+        assertEquals("tls", tls.mode)
+        assertEquals(true, tls.certTrusted)
         assertEquals(11L, tls.tcpMs)
         assertEquals(22L, tls.tlsMs)
         assertEquals("service_reach", stun.testType)
         assertEquals("stun", stun.service)
         assertEquals("udp_stun", stun.protocol)
+        assertEquals("udp_stun", stun.mode)
         assertEquals(33L, stun.udpMs)
         assertNull(stun.tcpMs)
+    }
+
+    @Test
+    fun tlsAnyCertRetriesWithTrustDisabledAndReportsUntrustedCertificate() {
+        val trustModes = mutableListOf<CanaryTlsTrustMode>()
+        val transport = SocketCanaryServiceReachTransport(
+            clock = { 1_000L + trustModes.size },
+            operations = object : CanaryTlsProbeOperations {
+                override fun resolve(host: String, port: Int, timeoutMs: Int): List<InetSocketAddress> =
+                    listOf(loopback(port))
+
+                override fun connect(socket: Socket, address: InetSocketAddress, timeoutMs: Int) = Unit
+
+                override fun handshake(socket: Socket, host: String, port: Int, sniHost: String?, timeoutMs: Int) {
+                    fail("trust mode must be explicit for this test")
+                }
+
+                override fun handshake(
+                    socket: Socket,
+                    host: String,
+                    port: Int,
+                    sniHost: String?,
+                    timeoutMs: Int,
+                    trustMode: CanaryTlsTrustMode
+                ) {
+                    trustModes += trustMode
+                    if (trustMode == CanaryTlsTrustMode.NORMAL) throw SSLHandshakeException("untrusted")
+                }
+            }
+        )
+
+        val timing = transport.tlsHandshakeAnyCert("chat.signal.org", 443, "chat.signal.org", 10_000)
+
+        assertEquals(listOf(CanaryTlsTrustMode.NORMAL, CanaryTlsTrustMode.ANY_CERT), trustModes)
+        assertEquals(false, timing.certTrusted)
+    }
+
+    @Test
+    fun tcpModeConnectsWithoutTlsHandshake() {
+        val executor = CanaryServiceReachExecutor(
+            transport = object : CanaryServiceReachTransport {
+                override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+                    CanaryTlsReachTiming(1, 2)
+
+                override fun tcpConnect(host: String, port: Int, timeoutMs: Int): Long {
+                    assertEquals("g.whatsapp.net", host)
+                    return 44
+                }
+
+                override fun stunBinding(host: String, port: Int, request: ByteArray, transactionId: ByteArray, timeoutMs: Int): Long = 3
+            }
+        )
+
+        val result = executor.runServiceReach().single { it.host == "g.whatsapp.net" && it.port == 5222 }
+
+        assertEquals("tcp", result.mode)
+        assertEquals(44L, result.tcpMs)
+        assertNull(result.tlsMs)
+        assertNull(result.certTrusted)
+    }
+
+    @Test
+    fun literalIpSkipsResolverAndPreservesNoSni() {
+        val sniValues = mutableListOf<String?>()
+        val transport = SocketCanaryServiceReachTransport(
+            clock = { 1_000L },
+            operations = object : CanaryTlsProbeOperations {
+                override fun resolve(host: String, port: Int, timeoutMs: Int): List<InetSocketAddress> {
+                    fail("literal IP must not use DNS resolver")
+                    return emptyList()
+                }
+
+                override fun connect(socket: Socket, address: InetSocketAddress, timeoutMs: Int) {
+                    assertEquals("149.154.167.50", address.address.hostAddress)
+                    assertEquals(443, address.port)
+                }
+
+                override fun handshake(socket: Socket, host: String, port: Int, sniHost: String?, timeoutMs: Int) {
+                    sniValues += sniHost
+                }
+            }
+        )
+
+        transport.tlsHandshake("149.154.167.50", 443, null, 10_000)
+
+        assertEquals(listOf<String?>(null), sniValues)
+    }
+
+    @Test
+    fun stunFailuresUseUdpSpecificCategories() {
+        val failures = ArrayDeque<Throwable>().apply {
+            add(SocketTimeoutException("timeout"))
+            add(IllegalStateException("bad response"))
+        }
+        val executor = CanaryServiceReachExecutor(
+            transport = object : CanaryServiceReachTransport {
+                override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+                    CanaryTlsReachTiming(1, 2)
+
+                override fun stunBinding(host: String, port: Int, request: ByteArray, transactionId: ByteArray, timeoutMs: Int): Long {
+                    throw failures.removeFirst()
+                }
+            }
+        )
+
+        val stunErrors = executor.runServiceReach().filter { it.protocol == "udp_stun" }.map { it.errorCategory }
+
+        assertEquals(listOf(CanaryErrorCategory.UDP_TIMEOUT, CanaryErrorCategory.UDP_ERROR), stunErrors)
     }
 
     @Test
@@ -438,6 +551,9 @@ class CanaryServiceReachTest {
                 override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
                     CanaryTlsReachTiming(1, 2)
 
+                override fun tlsHandshakeAnyCert(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming =
+                    CanaryTlsReachTiming(3, 4, certTrusted = false)
+
                 override fun stunBinding(host: String, port: Int, request: ByteArray, transactionId: ByteArray, timeoutMs: Int): Long =
                     error("APNs reach must not run STUN")
             }
@@ -447,6 +563,8 @@ class CanaryServiceReachTest {
 
         assertEquals(listOf("apns_reach", "apns_reach", "apns_reach"), results.map { it.testType })
         assertEquals(listOf("1-courier.push.apple.com", "1-courier.push.apple.com", "api.push.apple.com"), results.map { it.host })
+        assertEquals(listOf("tls_any_cert", "tls_any_cert", "tls"), results.map { it.mode })
+        assertEquals(listOf(false, false, true), results.map { it.certTrusted })
     }
 
     @Test
