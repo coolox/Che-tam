@@ -140,6 +140,52 @@ class CanaryServiceReachTest {
     }
 
     @Test
+    fun tlsAnyCertFallbackUsesRemainingSharedDeadline() {
+        var now = 0L
+        val budgets = mutableListOf<Pair<CanaryTlsTrustMode, Int>>()
+        val transport = SocketCanaryServiceReachTransport(
+            clock = { now },
+            operations = object : CanaryTlsProbeOperations {
+                override fun resolve(host: String, port: Int, timeoutMs: Int): List<InetSocketAddress> =
+                    listOf(loopback(port))
+
+                override fun connect(socket: Socket, address: InetSocketAddress, timeoutMs: Int) {
+                    now += 2_000L
+                }
+
+                override fun handshake(socket: Socket, host: String, port: Int, sniHost: String?, timeoutMs: Int) {
+                    fail("trust mode must be explicit for this test")
+                }
+
+                override fun handshake(
+                    socket: Socket,
+                    host: String,
+                    port: Int,
+                    sniHost: String?,
+                    timeoutMs: Int,
+                    trustMode: CanaryTlsTrustMode
+                ) {
+                    budgets += trustMode to timeoutMs
+                    if (trustMode == CanaryTlsTrustMode.NORMAL) {
+                        now += 3_000L
+                        throw SSLHandshakeException("untrusted")
+                    }
+                }
+            }
+        )
+
+        transport.tlsHandshakeAnyCert("chat.signal.org", 443, "chat.signal.org", 10_000)
+
+        assertEquals(
+            listOf(
+                CanaryTlsTrustMode.NORMAL to 8_000,
+                CanaryTlsTrustMode.ANY_CERT to 3_000
+            ),
+            budgets
+        )
+    }
+
+    @Test
     fun tcpModeConnectsWithoutTlsHandshake() {
         val executor = CanaryServiceReachExecutor(
             transport = object : CanaryServiceReachTransport {

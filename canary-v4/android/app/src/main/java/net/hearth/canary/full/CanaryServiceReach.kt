@@ -376,14 +376,39 @@ class SocketCanaryServiceReachTransport internal constructor(
     ) : this(clock, JvmCanaryTlsProbeOperations(context.applicationContext))
 
     override fun tlsHandshake(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming {
-        return tlsHandshakeWithTrust(host, port, sniHost, timeoutMs, CanaryTlsTrustMode.NORMAL, certTrusted = true)
+        return tlsHandshakeWithTrust(
+            host,
+            port,
+            sniHost,
+            timeoutMs,
+            deadlineStarted = clock(),
+            trustMode = CanaryTlsTrustMode.NORMAL,
+            certTrusted = true
+        )
     }
 
     override fun tlsHandshakeAnyCert(host: String, port: Int, sniHost: String?, timeoutMs: Int): CanaryTlsReachTiming {
+        val deadlineStarted = clock()
         return try {
-            tlsHandshake(host, port, sniHost, timeoutMs)
+            tlsHandshakeWithTrust(
+                host,
+                port,
+                sniHost,
+                timeoutMs,
+                deadlineStarted,
+                CanaryTlsTrustMode.NORMAL,
+                certTrusted = true
+            )
         } catch (throwable: SSLHandshakeException) {
-            tlsHandshakeWithTrust(host, port, sniHost, timeoutMs, CanaryTlsTrustMode.ANY_CERT, certTrusted = false)
+            tlsHandshakeWithTrust(
+                host,
+                port,
+                sniHost,
+                timeoutMs,
+                deadlineStarted,
+                CanaryTlsTrustMode.ANY_CERT,
+                certTrusted = false
+            )
         }
     }
 
@@ -404,10 +429,10 @@ class SocketCanaryServiceReachTransport internal constructor(
         port: Int,
         sniHost: String?,
         timeoutMs: Int,
+        deadlineStarted: Long,
         trustMode: CanaryTlsTrustMode,
         certTrusted: Boolean
     ): CanaryTlsReachTiming {
-        val deadlineStarted = clock()
         val address = resolveTarget(host, port, deadlineStarted, timeoutMs)
         operations.openSocket().use { plain ->
             val tcpStarted = clock()
