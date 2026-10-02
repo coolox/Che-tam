@@ -21,3 +21,6 @@ coverage/
 *.bak
 android/.kotlin/
 releases/
+# Local Canary checkout and locally copied Android release artifacts.
+canary-v4/
+*.apk
