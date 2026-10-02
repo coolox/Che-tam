@@ -215,6 +215,179 @@ class CanaryEventJournalTest {
     }
 
     @Test
+    fun fullRunPayloadSerializesIpDirectProtocolAndHeartbeatStatusFields() {
+        val ipDirectHttp = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "ip_direct",
+                target = "203.0.113.10",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                mode = "http",
+                protocol = "http",
+                sni = "vmi3376157.contaboserver.net"
+            )
+        )
+        val ipDirectWs = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "ip_direct",
+                target = "203.0.113.10",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                mode = "ws",
+                protocol = "ws",
+                sni = "www.example.com"
+            )
+        )
+        val heartbeat = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "ws_heartbeat_status",
+                target = "example.test",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                intervalSec = 240,
+                alive = true,
+                ageSec = 120L,
+                pingsSent = 2,
+                pongsMissed = 0,
+                networkType = "wifi"
+            )
+        )
+        val deadHeartbeat = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "ws_heartbeat_status",
+                target = "example.test",
+                success = false,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.WS_CLOSED,
+                intervalSec = 540,
+                alive = false,
+                ageSec = 3600L,
+                pingsSent = 3,
+                pongsMissed = 1,
+                networkType = "cellular"
+            )
+        )
+
+        assertEquals("http", ipDirectHttp.getString("protocol"))
+        assertEquals("http", ipDirectHttp.getString("mode"))
+        assertEquals("vmi3376157.contaboserver.net", ipDirectHttp.getString("sni"))
+        assertEquals("ws", ipDirectWs.getString("protocol"))
+        assertEquals("ws", ipDirectWs.getString("mode"))
+        assertEquals("www.example.com", ipDirectWs.getString("sni"))
+        assertEquals("ws_heartbeat_status", heartbeat.getString("testType"))
+        assertEquals(240, heartbeat.getInt("intervalSec"))
+        assertTrue(heartbeat.getBoolean("alive"))
+        assertEquals(120L, heartbeat.getLong("ageSec"))
+        assertEquals(2, heartbeat.getInt("pingsSent"))
+        assertEquals(0, heartbeat.getInt("pongsMissed"))
+        assertEquals(false, deadHeartbeat.getBoolean("success"))
+        assertEquals(false, deadHeartbeat.getBoolean("alive"))
+        assertEquals("ws_closed", deadHeartbeat.getString("errorCategory"))
+    }
+
+    @Test
+    fun heartbeatDeathPayloadSerializesCorrelationStateAndDetector() {
+        val payload = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "ws_heartbeat_dead",
+                target = "example.test",
+                success = false,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.WS_CLOSED,
+                connectionId = "connection-1",
+                intervalSec = 60,
+                ageSec = 3600L,
+                closeCode = 1001,
+                closeReason = "silence_timeout",
+                reason = "callback_close",
+                detectedBy = "onClosed",
+                exceptionClass = "java.io.IOException",
+                lastInboundAtMs = 1_000L,
+                lastOutboundAtMs = 2_000L,
+                networkType = "wifi",
+                screenOn = true,
+                deviceIdleMode = false
+            )
+        )
+
+        assertEquals("connection-1", payload.getString("connectionId"))
+        assertEquals(60, payload.getInt("intervalSec"))
+        assertEquals(3600L, payload.getLong("ageSec"))
+        assertEquals(1001, payload.getInt("closeCode"))
+        assertEquals("silence_timeout", payload.getString("closeReason"))
+        assertEquals("callback_close", payload.getString("reason"))
+        assertEquals("onClosed", payload.getString("detectedBy"))
+        assertEquals(1_000L, payload.getLong("lastInboundAtMs"))
+        assertEquals(2_000L, payload.getLong("lastOutboundAtMs"))
+        assertEquals("wifi", payload.getString("networkType"))
+        assertTrue(payload.getBoolean("screenOn"))
+        assertEquals(false, payload.getBoolean("deviceIdleMode"))
+    }
+
+    @Test
+    fun heartbeatStatusPayloadCoversAllIntervalsAndSuccessMatchesAlive() {
+        val payloads = listOf(
+            60 to true,
+            240 to true,
+            540 to false
+        ).map { (interval, alive) ->
+            lightRunPayload(
+                "run-1",
+                net.hearth.canary.light.CanaryTestResult(
+                    testType = "ws_heartbeat_status",
+                    target = "example.test",
+                    success = alive,
+                    errorCategory = if (alive) {
+                        net.hearth.canary.light.CanaryErrorCategory.NONE
+                    } else {
+                        net.hearth.canary.light.CanaryErrorCategory.WS_CLOSED
+                    },
+                    intervalSec = interval,
+                    alive = alive,
+                    ageSec = interval.toLong(),
+                    pingsSent = 1,
+                    pongsMissed = if (alive) 0 else 1,
+                    networkType = "wifi"
+                )
+            )
+        }
+
+        assertEquals(listOf(60, 240, 540), payloads.map { it.getInt("intervalSec") })
+        payloads.forEach { payload ->
+            assertEquals(payload.getBoolean("alive"), payload.getBoolean("success"))
+        }
+    }
+
+    @Test
+    fun serviceReachPayloadSerializesReachabilityFields() {
+        val payload = lightRunPayload(
+            "run-1",
+            net.hearth.canary.light.CanaryTestResult(
+                testType = "service_reach",
+                target = "www.google.com:443",
+                success = true,
+                errorCategory = net.hearth.canary.light.CanaryErrorCategory.NONE,
+                service = "google",
+                host = "www.google.com",
+                port = 443,
+                protocol = "tls",
+                tcpMs = 12,
+                tlsMs = 34
+            )
+        )
+
+        assertEquals("google", payload.getString("service"))
+        assertEquals("www.google.com", payload.getString("host"))
+        assertEquals(443, payload.getInt("port"))
+        assertEquals("tls", payload.getString("protocol"))
+        assertEquals(12L, payload.getLong("tcpMs"))
+        assertEquals(34L, payload.getLong("tlsMs"))
+    }
+
+    @Test
     fun runSummaryPayloadIncludesAggregateTrafficCounters() {
         val payload = runSummaryPayload(
             "run-1",

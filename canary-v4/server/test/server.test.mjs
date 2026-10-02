@@ -10,6 +10,7 @@ import { MemoryJournalStore } from '../src/journal-store.mjs';
 import { createCanaryServer } from '../src/server.mjs';
 import { createTurnCredentials } from '../src/turn-cred.mjs';
 import { createUdpEchoServer } from '../src/udp-echo.mjs';
+import { parseHeartbeatPing } from '../src/websocket.mjs';
 
 const TEST_KEY = 'test-key';
 
@@ -29,6 +30,18 @@ describe('TURN REST credentials', () => {
       credentials.credential,
       createHmac('sha1', secret).update(credentials.username).digest('base64'),
     );
+  });
+});
+
+describe('Canary WebSocket heartbeat timeout helpers', () => {
+  it('validates heartbeat disconnectAfterSec payloads', () => {
+    assert.deepEqual(
+      parseHeartbeatPing(JSON.stringify({ type: 'ws_heartbeat', intervalSec: 60, disconnectAfterSec: 150 })),
+      { intervalSec: 60, disconnectAfterSec: 150 },
+    );
+    assert.equal(parseHeartbeatPing('heartbeat-60-legacy'), null);
+    assert.equal(parseHeartbeatPing(JSON.stringify({ type: 'ws_keepalive', intervalSec: 60, disconnectAfterSec: 150 })), null);
+    assert.equal(parseHeartbeatPing(JSON.stringify({ type: 'ws_heartbeat', intervalSec: 60, disconnectAfterSec: 149 })), null);
   });
 });
 
@@ -391,6 +404,97 @@ describe('Canary v4 server', () => {
       await new Promise((resolve) => logServer.close(resolve));
     }
   });
+
+  it('closes opted-in heartbeat sockets once for silence timeout with fake timers', async () => {
+    const logs = [];
+    const runtime = new FakeWebSocketRuntime(1_800_000_000_000);
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      websocketRuntime: runtime,
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+    let client;
+
+    try {
+      client = await openWebSocket(url, CANARY_PATH);
+      client.write(maskedFrame(0x1, Buffer.from(JSON.stringify({
+        type: 'ws_heartbeat',
+        intervalSec: 0.4,
+        disconnectAfterSec: 1,
+      }))));
+      await readFrame(client);
+      runtime.advanceBy(999);
+      assert.equal(logs.filter((entry) => entry.event === 'canary_ws_close').length, 0);
+      runtime.advanceBy(1);
+      const closeFrame = await readFrame(client);
+      assert.equal(closeFrame.opcode, 0x8);
+      assert.equal(closeFrame.payload.readUInt16BE(0), 1001);
+
+      const closeLogs = logs.filter((entry) => entry.event === 'canary_ws_close');
+      assert.equal(closeLogs.length, 1);
+      assert.equal(closeLogs[0].fields.reason, 'silence_timeout');
+      assert.equal(closeLogs[0].fields.closeCode, 1001);
+      assert.equal(closeLogs[0].fields.durationMs, 1000);
+      assert.equal(closeLogs[0].fields.lastFrameAt, '2027-01-15T08:00:00.000Z');
+      await destroyClient(client);
+      client = null;
+      assert.equal(logs.filter((entry) => entry.event === 'canary_ws_close').length, 1);
+    } finally {
+      await destroyClient(client);
+      await closeServer(logServer);
+    }
+  });
+
+  it('does not arm silence timeout for ordinary or keepalive frames', async () => {
+    const logs = [];
+    const runtime = new FakeWebSocketRuntime(1_800_000_000_000);
+    const logServer = createCanaryServer({
+      canaryKey: TEST_KEY,
+      journalStore: new MemoryJournalStore(),
+      websocketRuntime: runtime,
+      logger: {
+        info(event, fields) {
+          logs.push({ event, fields });
+        },
+        warn() {},
+      },
+    });
+    await listenLocal(logServer);
+    const address = logServer.address();
+    const url = `http://127.0.0.1:${address.port}`;
+    let ordinary;
+    let keepalive;
+
+    try {
+      ordinary = await openWebSocket(url, CANARY_PATH);
+      ordinary.write(maskedFrame(0x1, Buffer.from('ordinary')));
+      await readFrame(ordinary);
+      keepalive = await openWebSocket(url, CANARY_PATH);
+      keepalive.write(maskedFrame(0x1, Buffer.from(JSON.stringify({
+        type: 'ws_keepalive',
+        intervalSec: 60,
+        disconnectAfterSec: 150,
+      }))));
+      await readFrame(keepalive);
+
+      assert.equal(runtime.pendingTimers(), 0);
+      runtime.advanceBy(200_000);
+      assert.equal(logs.filter((entry) => entry.event === 'canary_ws_close').length, 0);
+    } finally {
+      await destroyClient(ordinary);
+      await destroyClient(keepalive);
+      await closeServer(logServer);
+    }
+  });
 });
 
 describe('Canary v4 UDP echo server', () => {
@@ -556,8 +660,8 @@ function sendUdpAndReceive(socket, payload, port, host) {
   });
 }
 
-async function waitForLog(logs, eventName) {
-  for (let attempt = 0; attempt < 10; attempt += 1) {
+async function waitForLog(logs, eventName, attempts = 10) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (logs.some((entry) => entry.event === eventName)) {
       return;
     }
@@ -574,6 +678,7 @@ async function destroyClient(client) {
 }
 
 async function closeServer(server) {
+  server.closeCanaryWebSockets?.();
   server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));
 }
@@ -583,4 +688,55 @@ function silentLogger() {
     info() {},
     warn() {},
   };
+}
+
+class FakeWebSocketRuntime {
+  #nowMs;
+  #nextId = 1;
+  #timers = new Map();
+
+  constructor(nowMs) {
+    this.#nowMs = nowMs;
+  }
+
+  nowMs() {
+    return this.#nowMs;
+  }
+
+  isoNow() {
+    return this.isoFromMs(this.#nowMs);
+  }
+
+  isoFromMs(ms) {
+    return new Date(ms).toISOString();
+  }
+
+  setTimer(callback, delayMs) {
+    const timer = { id: this.#nextId++, unref() {} };
+    this.#timers.set(timer.id, { dueMs: this.#nowMs + delayMs, callback });
+    return timer;
+  }
+
+  clearTimer(timer) {
+    this.#timers.delete(timer?.id);
+  }
+
+  pendingTimers() {
+    return this.#timers.size;
+  }
+
+  advanceBy(deltaMs) {
+    const target = this.#nowMs + deltaMs;
+    while (true) {
+      const next = [...this.#timers.entries()]
+        .filter(([, timer]) => timer.dueMs <= target)
+        .sort((a, b) => a[1].dueMs - b[1].dueMs)[0];
+      if (!next) break;
+      const [id, timer] = next;
+      this.#timers.delete(id);
+      this.#nowMs = timer.dueMs;
+      timer.callback();
+    }
+    this.#nowMs = target;
+  }
 }

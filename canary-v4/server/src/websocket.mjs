@@ -4,7 +4,8 @@ const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const PRINTABLE_RE = /^[\x20-\x7e]{1,64}$/;
 
-export function handleWebSocketUpgrade(request, socket, { path, logger = console } = {}) {
+export function handleWebSocketUpgrade(request, socket, { path, logger = console, runtime = null } = {}) {
+  const wsRuntime = runtime ?? realRuntime;
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
   const key = request.headers['sec-websocket-key'];
   const upgrade = request.headers.upgrade?.toLowerCase();
@@ -28,8 +29,8 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     '',
   ].join('\r\n'));
 
-  const openedAtMs = Date.now();
-  const openedAt = new Date(openedAtMs).toISOString();
+  const openedAtMs = wsRuntime.nowMs();
+  const openedAt = wsRuntime.isoNow();
   logger.info?.('canary_ws_open', {
     connectionId,
     deviceLabel,
@@ -42,12 +43,14 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
     closeReason: null,
     finalized: false,
     lastReceivedAt: null,
+    lastFrameAt: null,
+    heartbeatTimer: null,
   };
 
   socket.on('data', (chunk) => {
-    state.lastReceivedAt = new Date().toISOString();
+    state.lastReceivedAt = wsRuntime.isoNow();
     state.buffer = Buffer.concat([state.buffer, chunk]);
-    processFrames(socket, state);
+    processFrames(socket, state, wsRuntime);
   });
   socket.on('end', () => {
     finalizeClose(state.closeReason ?? 'remote_eof');
@@ -62,21 +65,32 @@ export function handleWebSocketUpgrade(request, socket, { path, logger = console
   function finalizeClose(reason) {
     if (state.finalized) return;
     state.finalized = true;
-    const closedAtMs = Date.now();
+    if (state.heartbeatTimer) {
+      wsRuntime.clearTimer(state.heartbeatTimer);
+      state.heartbeatTimer = null;
+    }
+    const closedAtMs = wsRuntime.nowMs();
     logger.info?.('canary_ws_close', {
       connectionId,
       deviceLabel,
       openedAt,
-      timestamp: new Date(closedAtMs).toISOString(),
+      timestamp: wsRuntime.isoFromMs(closedAtMs),
       durationMs: Math.max(0, closedAtMs - openedAtMs),
       closeCode: state.closeCode,
       reason,
       lastReceivedAt: state.lastReceivedAt,
+      lastFrameAt: state.lastFrameAt,
     });
   }
+
+  state.closeForSilence = () => {
+    if (state.closed || state.finalized) return;
+    closeSocket(socket, state, 1001, 'silence_timeout');
+    finalizeClose('silence_timeout');
+  };
 }
 
-function processFrames(socket, state) {
+function processFrames(socket, state, runtime) {
   while (!state.closed && state.buffer.length >= 2) {
     const first = state.buffer[0];
     const second = state.buffer[1];
@@ -120,6 +134,10 @@ function processFrames(socket, state) {
     }
 
     if (opcode === 0x1 || opcode === 0x2) {
+      state.lastFrameAt = runtime.isoNow();
+      if (opcode === 0x1) {
+        maybeRefreshHeartbeatTimeout(payload.toString('utf8'), state, runtime);
+      }
       socket.write(encodeFrame(opcode, payload));
     } else if (opcode === 0x8) {
       state.closeCode = payload.length >= 2 ? payload.readUInt16BE(0) : 1000;
@@ -135,6 +153,35 @@ function processFrames(socket, state) {
       closeSocket(socket, state, 1003, 'server_protocol_error');
     }
   }
+}
+
+function maybeRefreshHeartbeatTimeout(text, state, runtime) {
+  const heartbeat = parseHeartbeatPing(text);
+  if (!heartbeat) return;
+  if (state.heartbeatTimer) {
+    runtime.clearTimer(state.heartbeatTimer);
+  }
+  state.heartbeatTimer = runtime.setTimer(() => {
+    state.closeForSilence?.();
+  }, heartbeat.disconnectAfterSec * 1000);
+  state.heartbeatTimer.unref?.();
+}
+
+export function parseHeartbeatPing(text) {
+  let payload;
+  try {
+    payload = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (payload?.type !== 'ws_heartbeat') return null;
+  const intervalSec = Number(payload.intervalSec);
+  const disconnectAfterSec = Number(payload.disconnectAfterSec);
+  if (!Number.isFinite(intervalSec) || !Number.isFinite(disconnectAfterSec)) return null;
+  if (!Number.isInteger(disconnectAfterSec) || disconnectAfterSec < 1 || disconnectAfterSec > 3600) return null;
+  const expected = Math.round(intervalSec * 2.5);
+  if (disconnectAfterSec !== expected) return null;
+  return { intervalSec, disconnectAfterSec };
 }
 
 function closeSocket(socket, state, code, reason) {
@@ -174,3 +221,11 @@ export function encodeFrame(opcode, payload = Buffer.alloc(0)) {
   }
   return Buffer.concat([header, payload]);
 }
+
+const realRuntime = {
+  nowMs: () => Date.now(),
+  isoNow: () => new Date().toISOString(),
+  isoFromMs: (ms) => new Date(ms).toISOString(),
+  setTimer: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimer: (timer) => clearTimeout(timer),
+};

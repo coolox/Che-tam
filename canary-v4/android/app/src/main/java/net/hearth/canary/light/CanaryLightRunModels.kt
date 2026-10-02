@@ -60,6 +60,9 @@ data class CanaryTestResult(
     val target: String,
     val success: Boolean,
     val errorCategory: CanaryErrorCategory,
+    val service: String? = null,
+    val host: String? = null,
+    val port: Int? = null,
     val errorDetail: String? = null,
     val exceptionClass: String? = null,
     val latencyMs: Long? = null,
@@ -71,6 +74,8 @@ data class CanaryTestResult(
     val changed: Boolean? = null,
     val httpStatus: Int? = null,
     val networkType: String? = null,
+    val screenOn: Boolean? = null,
+    val deviceIdleMode: Boolean? = null,
     val bytesTx: Long? = null,
     val bytesRx: Long? = null,
     val connectionId: String? = null,
@@ -81,6 +86,7 @@ data class CanaryTestResult(
     val runKind: String? = null,
     val sni: String? = null,
     val mode: String? = null,
+    val protocol: String? = null,
     val provider: String? = null,
     val valuesMs: List<Long> = emptyList(),
     val count: Int? = null,
@@ -90,7 +96,9 @@ data class CanaryTestResult(
     val maxMs: Long? = null,
     val lost: Int? = null,
     val connectMs: Long? = null,
+    val tcpMs: Long? = null,
     val tlsMs: Long? = null,
+    val udpMs: Long? = null,
     val allocateMs: Long? = null,
     val echoRttMs: Long? = null,
     val echoBytes: Int? = null,
@@ -100,7 +108,13 @@ data class CanaryTestResult(
     val bytesConfirmed: Long? = null,
     val bytesToday: Long? = null,
     val intervalSec: Int? = null,
-    val reason: String? = null
+    val alive: Boolean? = null,
+    val pingsSent: Int? = null,
+    val pongsMissed: Int? = null,
+    val lastInboundAtMs: Long? = null,
+    val lastOutboundAtMs: Long? = null,
+    val reason: String? = null,
+    val detectedBy: String? = null
 ) {
     init {
         require(!success || errorCategory == CanaryErrorCategory.NONE) {

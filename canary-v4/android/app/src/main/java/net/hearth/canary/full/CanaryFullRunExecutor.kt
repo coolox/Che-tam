@@ -50,9 +50,17 @@ class CanaryFullRunExecutor(
         .build()
     private val pinnedClient = pinnedClient()
     private val heartbeatKeeper = CanaryHeartbeatKeeper(deviceLabel, { clock() }, { pinnedClient() })
+    private val serviceReachExecutor = CanaryServiceReachExecutor(
+        clock,
+        SocketCanaryServiceReachTransport(appContext)
+    )
     private val random = SecureRandom()
 
-    fun run(includeUploads: Boolean, includeDailyUpload: Boolean, includeJournalUpload: Boolean): List<CanaryTestResult> {
+    fun run(
+        uploadPayloadBytes: List<Int>,
+        includeJournalUpload: Boolean,
+        includeServiceReach: Boolean = false
+    ): List<CanaryTestResult> {
         val results = mutableListOf<CanaryTestResult>()
         results += wsDomain()
         results += ipDirect()
@@ -60,16 +68,11 @@ class CanaryFullRunExecutor(
         results += latencySample()
         results += dnsConsistency()
         results += reachabilityTargets()
+        results += serviceReachExecutor.runFullRunReach(includeServiceReach)
         results += heartbeatKeeper.probe()
         results += turnProbe("turn_tls", 5349, tls = true)
         results += turnProbe("turn_tcp", 3478, tls = false)
-        if (includeUploads) {
-            CanaryUploadSchedule.smallPayloadsForUtcHour(Instant.ofEpochMilli(clock()).atZone(java.time.ZoneOffset.UTC).hour)
-                .forEach { results += payloadUpload(it) }
-            if (includeDailyUpload) {
-                results += payloadUpload(2 * 1024 * 1024)
-            }
-        }
+        uploadPayloadBytes.forEach { results += payloadUpload(it) }
         if (includeJournalUpload && journal != null) {
             results += journalUpload(journal)
         }
@@ -105,24 +108,25 @@ class CanaryFullRunExecutor(
         return executeStatusOnly("ip_direct", ip, request, directClient(ip, sniHost)).copy(
             latencyMs = clock() - startedAt,
             mode = "http",
+            protocol = "http",
             sni = sniHost
         )
     }
 
     private fun dohResolve(): List<CanaryTestResult> =
         DOH_PROVIDERS.map { provider ->
-            val url = "${provider.url}?name=${CanaryLightRunExecutor.SERVER_HOST}&type=A"
+            val url = "${provider.url}?dns=${CanaryDohMessage.queryParam(CanaryLightRunExecutor.SERVER_HOST, CanaryDohMessage.TYPE_A)}"
             val request = Request.Builder()
                 .url(url)
-                .header("Accept", "application/dns-json")
+                .header("Accept", DOH_ACCEPT_HEADER)
                 .header(CanaryCorrelation.DEVICE_LABEL_HEADER, deviceLabel)
                 .get()
                 .build()
             val startedAt = clock()
             try {
                 client.newCall(request).execute().use { response ->
-                    val body = response.body?.string().orEmpty()
-                    val addresses = if (response.isSuccessful) CanaryDohParser.parseValidAddresses(body) else emptyList()
+                    val body = response.body?.bytes() ?: ByteArray(0)
+                    val addresses = if (response.isSuccessful) CanaryDohMessage.parseValidAddresses(body) else emptyList()
                     CanaryTestResult(
                         testType = "doh_resolve",
                         target = CanaryLightRunExecutor.SERVER_HOST,
@@ -261,54 +265,55 @@ class CanaryFullRunExecutor(
             } else {
                 Socket(CanaryLightRunExecutor.SERVER_HOST, port)
             }
-            socket.soTimeout = 7000
-            connectMs = clock() - connectStart
-            val input = socket.getInputStream()
-            val output = socket.getOutputStream()
-            val allocateStart = clock()
-            output.write(CanaryTurnMessage.allocateChallenge())
-            output.flush()
-            val challenge = readStun(input)
-            val realm = CanaryTurnMessage.stringAttribute(challenge, CanaryTurnMessage.ATTR_REALM)
-                ?: error("TURN challenge missing realm")
-            val nonce = CanaryTurnMessage.stringAttribute(challenge, CanaryTurnMessage.ATTR_NONCE)
-                ?: error("TURN challenge missing nonce")
-            output.write(CanaryTurnMessage.allocateAuthenticated(credential.username, realm, nonce, credential.password))
-            output.flush()
-            val allocateResponse = readStun(input)
-            allocateMs = clock() - allocateStart
-            val allocateError = CanaryTurnMessage.errorCode(allocateResponse).also { turnErrorCode = it }
-            check(CanaryTurnMessage.isSuccess(allocateResponse, CanaryTurnMessage.METHOD_ALLOCATE)) {
-                "TURN allocate failed code=${allocateError ?: "unknown"}"
+            socket.use {
+                it.soTimeout = 7000
+                connectMs = clock() - connectStart
+                val input = it.getInputStream()
+                val output = it.getOutputStream()
+                val allocateStart = clock()
+                output.write(CanaryTurnMessage.allocateChallenge())
+                output.flush()
+                val challenge = readStun(input)
+                val realm = CanaryTurnMessage.stringAttribute(challenge, CanaryTurnMessage.ATTR_REALM)
+                    ?: error("TURN challenge missing realm")
+                val nonce = CanaryTurnMessage.stringAttribute(challenge, CanaryTurnMessage.ATTR_NONCE)
+                    ?: error("TURN challenge missing nonce")
+                output.write(CanaryTurnMessage.allocateAuthenticated(credential.username, realm, nonce, credential.password))
+                output.flush()
+                val allocateResponse = readStun(input)
+                allocateMs = clock() - allocateStart
+                val allocateError = CanaryTurnMessage.errorCode(allocateResponse).also { turnErrorCode = it }
+                check(CanaryTurnMessage.isSuccess(allocateResponse, CanaryTurnMessage.METHOD_ALLOCATE)) {
+                    "TURN allocate failed code=${allocateError ?: "unknown"}"
+                }
+                output.write(CanaryTurnMessage.createPermission(credential.username, realm, nonce, credential.password, TURN_ECHO_HOST, TURN_ECHO_PORT))
+                output.flush()
+                val permissionResponse = readStun(input)
+                val permissionError = CanaryTurnMessage.errorCode(permissionResponse).also { turnErrorCode = it }
+                check(CanaryTurnMessage.isSuccess(permissionResponse, CanaryTurnMessage.METHOD_CREATE_PERMISSION)) {
+                    "TURN create permission failed code=${permissionError ?: "unknown"}"
+                }
+                val echoPayload = ByteArray(8 * 1024) { (it % 251).toByte() }
+                val echoStart = clock()
+                output.write(CanaryTurnMessage.sendIndication(TURN_ECHO_HOST, TURN_ECHO_PORT, echoPayload))
+                output.flush()
+                val echoed = readUntilData(input)
+                echoRttMs = clock() - echoStart
+                check(echoed.contentEquals(echoPayload)) { "TURN echo payload mismatch" }
+                CanaryTestResult(
+                    testType = testType,
+                    target = "${CanaryLightRunExecutor.SERVER_HOST}:$port",
+                    success = true,
+                    errorCategory = CanaryErrorCategory.NONE,
+                    latencyMs = clock() - startedAt,
+                    connectMs = connectMs,
+                    tlsMs = tlsMs,
+                    allocateMs = allocateMs,
+                    echoRttMs = echoRttMs,
+                    echoBytes = echoPayload.size,
+                    throughputKbps = CanaryPayloadMetrics.throughputKbps(echoPayload.size.toLong(), echoRttMs ?: 0L)
+                )
             }
-            output.write(CanaryTurnMessage.createPermission(credential.username, realm, nonce, credential.password, TURN_ECHO_HOST, TURN_ECHO_PORT))
-            output.flush()
-            val permissionResponse = readStun(input)
-            val permissionError = CanaryTurnMessage.errorCode(permissionResponse).also { turnErrorCode = it }
-            check(CanaryTurnMessage.isSuccess(permissionResponse, CanaryTurnMessage.METHOD_CREATE_PERMISSION)) {
-                "TURN create permission failed code=${permissionError ?: "unknown"}"
-            }
-            val echoPayload = ByteArray(8 * 1024) { (it % 251).toByte() }
-            val echoStart = clock()
-            output.write(CanaryTurnMessage.sendIndication(TURN_ECHO_HOST, TURN_ECHO_PORT, echoPayload))
-            output.flush()
-            val echoed = readUntilData(input)
-            echoRttMs = clock() - echoStart
-            check(echoed.contentEquals(echoPayload)) { "TURN echo payload mismatch" }
-            socket.close()
-            CanaryTestResult(
-                testType = testType,
-                target = "${CanaryLightRunExecutor.SERVER_HOST}:$port",
-                success = true,
-                errorCategory = CanaryErrorCategory.NONE,
-                latencyMs = clock() - startedAt,
-                connectMs = connectMs,
-                tlsMs = tlsMs,
-                allocateMs = allocateMs,
-                echoRttMs = echoRttMs,
-                echoBytes = echoPayload.size,
-                throughputKbps = CanaryPayloadMetrics.throughputKbps(echoPayload.size.toLong(), echoRttMs ?: 0L)
-            )
         } catch (throwable: Throwable) {
             failure(testType, "${CanaryLightRunExecutor.SERVER_HOST}:$port", CanaryErrorCategory.TURN_ERROR, CanarySecretScrubber.safeError(throwable.message), throwable)
                 .copy(connectMs = connectMs, tlsMs = tlsMs, allocateMs = allocateMs, echoRttMs = echoRttMs, turnErrorCode = turnErrorCode)
@@ -325,10 +330,9 @@ class CanaryFullRunExecutor(
                 .build()
             pinnedClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) error("TURN credential HTTP ${response.code}")
-                val json = JSONObject(response.body?.string().orEmpty())
-                TurnCredential(
-                    username = json.getString("username"),
-                    password = json.getString("password")
+                CanaryTurnCredentialParser.parse(
+                    response.body?.string().orEmpty(),
+                    nowEpochSec = clock() / 1000L
                 )
             }
         }
@@ -453,6 +457,7 @@ class CanaryFullRunExecutor(
             latencyMs = clock() - startedAt,
             connectionId = connectionId,
             mode = mode,
+            protocol = mode.takeIf { it == "http" || it == "ws" },
             sni = sniHost
         )
     }
@@ -520,12 +525,11 @@ class CanaryFullRunExecutor(
 
     data class Target(val host: String, val port: Int)
     data class DohProvider(val name: String, val url: String)
-    private data class TurnCredential(val username: String, val password: String)
 
     companion object {
         val DOH_PROVIDERS = listOf(
             DohProvider("cloudflare", "https://cloudflare-dns.com/dns-query"),
-            DohProvider("google", "https://dns.google/resolve"),
+            DohProvider("google", "https://dns.google/dns-query"),
             DohProvider("quad9", "https://dns.quad9.net/dns-query")
         )
         val FCM_REACH_TARGETS = listOf(
@@ -537,6 +541,7 @@ class CanaryFullRunExecutor(
         )
         val HEARTBEAT_INTERVALS = listOf(60, 240, 540)
         val DIRECT_SNI_HOSTS = listOf(CanaryLightRunExecutor.SERVER_HOST, "www.example.com")
+        const val DOH_ACCEPT_HEADER = "application/dns-message"
         const val TURN_ECHO_HOST = "127.0.0.1"
         const val TURN_ECHO_PORT = 9999
 
@@ -557,33 +562,60 @@ private class CanaryHeartbeatKeeper(
     }
 
     fun probe(): List<CanaryTestResult> =
-        tracks.values.mapNotNull { it.probe(deviceLabel, clock, clientProvider()) }
+        tracks.values.flatMap { it.probe(deviceLabel, clock, clientProvider()) }
 }
 
 private class HeartbeatTrack(private val intervalSec: Int) {
     private var socket: WebSocket? = null
     private var connectionId: String = CanaryCorrelation.newConnectionId()
     private var connectedAtMs: Long = 0L
+    private var state: CanaryHeartbeatStatusState? = null
+    private var closeCode: Int? = null
+    private var closeReason: String? = null
+    private var lastInboundAtMs: Long? = null
+    private var lastOutboundAtMs: Long? = null
     @Volatile private var failure: Throwable? = null
+    private var pendingDeath: HeartbeatDeathEvidence? = null
 
-    fun probe(deviceLabel: String, clock: () -> Long, client: OkHttpClient): CanaryTestResult? {
+    fun probe(deviceLabel: String, clock: () -> Long, client: OkHttpClient): List<CanaryTestResult> {
         val now = clock()
+        val results = mutableListOf<CanaryTestResult>()
+        pendingDeath?.let { evidence ->
+            state = (state ?: CanaryHeartbeatStatusState(intervalSec, connectedAtMs.takeIf { it > 0L } ?: now)).dead()
+            results += status(clock)
+            results += dead(clock, evidence.reason, evidence.throwable, evidence.detectedBy)
+            resetForReconnect()
+            return results
+        }
         ensureSocket(deviceLabel, clock, client)
-        val socketNow = socket ?: return dead(clock, "open_failed", failure)
-        if (now - connectedAtMs < intervalSec * 1000L) return null
+        val socketNow = socket
+        if (socketNow == null) {
+            state = (state ?: CanaryHeartbeatStatusState(intervalSec, now)).dead()
+            results += status(clock)
+            if (failure != null) results += dead(clock, "open_failed", failure, "probe_open")
+            resetForReconnect()
+            return results
+        }
+        if (now - connectedAtMs < intervalSec * 1000L) {
+            results += status(clock)
+            return results
+        }
 
         val latch = CountDownLatch(1)
-        val payload = "heartbeat-$intervalSec-$connectionId-${now}"
+        val payload = CanaryHeartbeatPayload.text(intervalSec, connectionId, now)
         expected = ExpectedHeartbeat(payload, latch)
+        lastOutboundAtMs = now
         if (!socketNow.send(payload) || !latch.await(5, TimeUnit.SECONDS)) {
-            val result = dead(clock, "echo_timeout", failure)
+            state = (state ?: CanaryHeartbeatStatusState(intervalSec, connectedAtMs)).sentPing(missed = true)
+            results += status(clock)
+            results += dead(clock, "echo_timeout", failure, "probe_echo_timeout")
             socketNow.cancel()
-            socket = null
-            connectionId = CanaryCorrelation.newConnectionId()
-            connectedAtMs = 0L
-            return result
+            resetForReconnect()
+            return results
         }
-        return null
+        state = (state ?: CanaryHeartbeatStatusState(intervalSec, connectedAtMs)).sentPing(missed = false)
+        results += status(clock)
+        return results
     }
 
     @Volatile private var expected: ExpectedHeartbeat? = null
@@ -592,9 +624,11 @@ private class HeartbeatTrack(private val intervalSec: Int) {
         if (socket != null) return
         failure = null
         connectedAtMs = clock()
+        state = CanaryHeartbeatStatusState(intervalSec, connectedAtMs)
         val request = CanaryCorrelation.websocketRequest(CanaryLightRunExecutor.SERVER_WS_URL, deviceLabel, connectionId)
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onMessage(webSocket: WebSocket, text: String) {
+                lastInboundAtMs = clock()
                 expected?.takeIf { it.payload == text }?.let {
                     it.latch.countDown()
                     expected = null
@@ -602,18 +636,43 @@ private class HeartbeatTrack(private val intervalSec: Int) {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                if (webSocket !== socket) return
+                closeCode = code
+                closeReason = reason
                 failure = IOException("closed:$code")
                 socket = null
+                state = state?.dead()
+                pendingDeath = HeartbeatDeathEvidence("callback_close", failure, "onClosed")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (webSocket !== socket) return
                 failure = t
                 socket = null
+                state = state?.dead()
+                pendingDeath = HeartbeatDeathEvidence("callback_failure", t, "onFailure")
             }
         })
     }
 
-    private fun dead(clock: () -> Long, reason: String, throwable: Throwable?): CanaryTestResult =
+    private fun status(clock: () -> Long): CanaryTestResult {
+        val current = state ?: CanaryHeartbeatStatusState(intervalSec, clock(), alive = socket != null && failure == null)
+        val alive = current.alive && socket != null && failure == null
+        return CanaryTestResult(
+            testType = "ws_heartbeat_status",
+            target = CanaryLightRunExecutor.SERVER_HOST,
+            success = alive,
+            errorCategory = if (alive) CanaryErrorCategory.NONE else CanaryErrorCategory.WS_CLOSED,
+            intervalSec = intervalSec,
+            alive = alive,
+            ageSec = current.ageSec(clock()),
+            pingsSent = current.pingsSent,
+            pongsMissed = current.pongsMissed,
+            networkType = "unknown"
+        )
+    }
+
+    private fun dead(clock: () -> Long, reason: String, throwable: Throwable?, detectedBy: String): CanaryTestResult =
         CanaryTestResult(
             testType = "ws_heartbeat_dead",
             target = CanaryLightRunExecutor.SERVER_HOST,
@@ -621,14 +680,34 @@ private class HeartbeatTrack(private val intervalSec: Int) {
             errorCategory = CanaryErrorCategory.WS_CLOSED,
             errorDetail = CanarySecretScrubber.safeError(throwable?.message),
             exceptionClass = throwable?.javaClass?.name,
+            connectionId = connectionId,
             intervalSec = intervalSec,
             ageSec = ((clock() - connectedAtMs).coerceAtLeast(0L)) / 1000L,
+            closeCode = closeCode,
+            closeReason = closeReason,
             reason = reason,
-            networkType = "unknown"
+            lastInboundAtMs = lastInboundAtMs,
+            lastOutboundAtMs = lastOutboundAtMs,
+            networkType = "unknown",
+            detectedBy = detectedBy
         )
+
+    private fun resetForReconnect() {
+        pendingDeath = null
+        failure = null
+        closeCode = null
+        closeReason = null
+        lastInboundAtMs = null
+        lastOutboundAtMs = null
+        socket = null
+        state = null
+        connectionId = CanaryCorrelation.newConnectionId()
+        connectedAtMs = 0L
+    }
 }
 
 private data class ExpectedHeartbeat(val payload: String, val latch: CountDownLatch)
+private data class HeartbeatDeathEvidence(val reason: String, val throwable: Throwable?, val detectedBy: String)
 
 private fun readUntilData(input: InputStream): ByteArray {
     repeat(4) {

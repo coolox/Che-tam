@@ -17,6 +17,10 @@
     <string name="readiness_title">Готовность</string>
     <string name="check_now_button">Проверить сейчас</string>
     <string name="full_check_now_button">Полный прогон сейчас</string>
+    <string name="service_reach_button">Проверить сервисы</string>
+    <string name="service_reach_title">Проверка сервисов</string>
+    <string name="service_reach_running">Проверка сервисов...</string>
+    <string name="service_reach_back_button">Назад</string>
     <string name="export_journal_button">Отправить журнал</string>
     <string name="readiness_button">Готовность</string>
     <string name="notification_settings_button">Настройки уведомлений</string>

@@ -13,9 +13,11 @@ import android.os.Looper
 import net.hearth.canary.MainActivity
 import net.hearth.canary.R
 import net.hearth.canary.full.CanaryFullRunExecutor
+import net.hearth.canary.full.CanaryFullUploadPlanner
 import net.hearth.canary.full.CanaryNightlyJournalPlanner
 import net.hearth.canary.full.CanaryRunKind
 import net.hearth.canary.full.CanaryRunPlanner
+import net.hearth.canary.full.CanaryServiceReachDailyPlanner
 import net.hearth.canary.full.CanaryTrafficBudget
 import net.hearth.canary.light.CanaryLightRunExecutor
 import net.hearth.canary.light.CanaryRunVerdictDeriver
@@ -191,15 +193,31 @@ class CanaryMonitorService : Service() {
                         val nightlyDecision = shouldAttemptNightlyJournalUpload(System.currentTimeMillis())
                         val includeJournalUpload = nightlyDecision.shouldAttempt
                         val includeDailyUpload = CanaryUploadDecision.includeDailyPayload(System.currentTimeMillis())
+                        val includeServiceReach = wakeupMethod != CanaryWakeupMethod.MANUAL_FULL &&
+                            shouldRunDailyServiceReach(System.currentTimeMillis())
+                        val uploadPayloads = CanaryFullUploadPlanner.payloadsForRun(
+                            wakeupMethod = wakeupMethod,
+                            nowMs = System.currentTimeMillis(),
+                            includeDailyUpload = includeDailyUpload
+                        )
                         val fullResults = requireNotNull(fullRunExecutor) { "Full run executor is not initialized" }
                             .run(
-                                includeUploads = true,
-                                includeDailyUpload = includeDailyUpload,
-                                includeJournalUpload = includeJournalUpload
+                                uploadPayloadBytes = uploadPayloads,
+                                includeJournalUpload = includeJournalUpload,
+                                includeServiceReach = includeServiceReach
                             )
-                            .map { result -> result.copy(networkType = result.networkType ?: fields?.networkType ?: "unknown") }
+                            .map { result ->
+                                result.copy(
+                                    networkType = result.networkType ?: fields?.networkType ?: "unknown",
+                                    screenOn = result.screenOn ?: fields?.screenOn,
+                                    deviceIdleMode = result.deviceIdleMode ?: fields?.deviceIdleMode
+                                )
+                            }
                         if (includeJournalUpload && fullResults.any { it.testType == "journal_upload" && it.success }) {
                             markNightlyJournalUploadSucceeded(nightlyDecision.localDay)
+                        }
+                        if (includeServiceReach && fullResults.any { it.testType == "service_reach" }) {
+                            markDailyServiceReachAttempted(System.currentTimeMillis())
                         }
                         fullResults.forEach { result ->
                             appendLightRunRecord(runId, result)
@@ -352,6 +370,18 @@ class CanaryMonitorService : Service() {
             .apply()
     }
 
+    private fun shouldRunDailyServiceReach(nowMs: Long): Boolean =
+        CanaryServiceReachDailyPlanner.shouldRun(
+            nowMs,
+            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getString(KEY_LAST_SERVICE_REACH_UTC_DAY, null)
+        )
+
+    private fun markDailyServiceReachAttempted(nowMs: Long) {
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+            .putString(KEY_LAST_SERVICE_REACH_UTC_DAY, CanaryServiceReachDailyPlanner.utcDay(nowMs))
+            .apply()
+    }
+
     private fun appendCycleError(phase: String, throwable: Throwable) {
         runCatching { ensureEventLog().appendCycleError(phase, throwable) }
             .onFailure { CanaryCycleErrorReporter.append(this, phase, throwable) }
@@ -430,6 +460,7 @@ class CanaryMonitorService : Service() {
         private const val PREFS_NAME = "canary_monitor"
         private const val KEY_LAST_SCHEDULED_AT = "lastScheduledAt"
         private const val KEY_LAST_NIGHTLY_JOURNAL_SUCCESS_DAY = "lastNightlyJournalSuccessDay"
+        private const val KEY_LAST_SERVICE_REACH_UTC_DAY = "lastServiceReachUtcDay"
         private const val KEY_PENDING_MANUAL_FULL = "pendingManualFull"
         private const val CYCLE_SKIP_REASON_OVERLAP = "overlap"
         private const val CYCLE_SKIP_REASON_BUDGET = "budget"

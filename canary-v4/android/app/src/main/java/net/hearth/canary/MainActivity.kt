@@ -26,6 +26,10 @@ import net.hearth.canary.monitor.CanaryEventDatabase
 import net.hearth.canary.monitor.CanaryEventJournal
 import net.hearth.canary.monitor.CanaryMonitorStarter
 import net.hearth.canary.monitor.CanaryMonitorState
+import net.hearth.canary.full.CanaryServiceReachExecutor
+import net.hearth.canary.full.CanaryServiceReachUiErrorSummary
+import net.hearth.canary.full.SocketCanaryServiceReachTransport
+import net.hearth.canary.light.CanaryTestResult
 import net.hearth.canary.ui.CanaryDeviceLabelStore
 import net.hearth.canary.ui.CanaryExportDeviceMetadata
 import net.hearth.canary.ui.CanaryJournalExportFormatter
@@ -34,6 +38,8 @@ import net.hearth.canary.ui.CanaryJournalSummaryFormatter
 import net.hearth.canary.ui.CanaryReadinessFormatter
 import net.hearth.canary.ui.CanaryReadinessInput
 import java.io.File
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : Activity() {
     private lateinit var deviceLabelInput: EditText
@@ -43,6 +49,10 @@ class MainActivity : Activity() {
     private lateinit var appVersionValue: TextView
     private lateinit var readinessValue: TextView
     private lateinit var readinessItems: LinearLayout
+    private val serviceReachRunning = AtomicBoolean(false)
+    private val serviceReachExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "canary-service-reach").apply { isDaemon = true }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -100,6 +110,9 @@ class MainActivity : Activity() {
             CanaryMonitorStarter.startFromManualFull(this)
             refresh()
         })
+        root.addView(actionButton(getString(R.string.service_reach_button)) {
+            runManualServiceReach()
+        })
         root.addView(actionButton(getString(R.string.export_journal_button)) {
             shareJournalExport()
         })
@@ -117,6 +130,69 @@ class MainActivity : Activity() {
         return ScrollView(this).apply {
             addView(root)
         }
+    }
+
+    override fun onDestroy() {
+        serviceReachExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
+    private fun runManualServiceReach() {
+        if (!serviceReachRunning.compareAndSet(false, true)) return
+        setContentView(serviceReachContent(getString(R.string.service_reach_running), emptyList()))
+        serviceReachExecutor.execute {
+            val results = runCatching {
+                CanaryServiceReachExecutor(
+                    transport = SocketCanaryServiceReachTransport(applicationContext)
+                ).runServiceReach()
+            }
+                .getOrElse { throwable ->
+                    listOf(
+                        CanaryTestResult(
+                            testType = "service_reach",
+                            target = "service_reach",
+                            success = false,
+                            errorCategory = net.hearth.canary.light.CanaryErrorCategory.OTHER,
+                            errorDetail = throwable.javaClass.simpleName
+                        )
+                    )
+                }
+            runOnUiThread {
+                serviceReachRunning.set(false)
+                setContentView(serviceReachContent(getString(R.string.service_reach_title), results))
+            }
+        }
+    }
+
+    private fun serviceReachContent(title: String, results: List<CanaryTestResult>): View {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(20), dp(20), dp(20))
+        }
+        root.addView(TextView(this).apply {
+            text = title
+            textSize = 24f
+            typeface = Typeface.DEFAULT_BOLD
+        })
+        root.addView(actionButton(getString(R.string.service_reach_back_button)) {
+            setContentView(buildContent())
+            refresh()
+        })
+        results.forEach { result ->
+            root.addView(TextView(this).apply {
+                val mark = if (result.success) "✓" else "✗"
+                val elapsed = result.tcpMs ?: result.udpMs ?: result.tlsMs ?: result.latencyMs
+                val error = if (result.success) "" else {
+                    val summary = CanaryServiceReachUiErrorSummary.format(result.errorDetail)
+                    " ${result.errorCategory.wireValue}${summary?.let { ": $it" } ?: ""}"
+                }
+                text = "$mark ${result.host ?: result.target}:${result.port ?: ""} ${elapsed ?: 0} ms$error"
+                textSize = 15f
+                setTextColor(if (result.success) COLOR_OK else COLOR_ALERT)
+                setPadding(0, dp(6), 0, dp(2))
+            })
+        }
+        return ScrollView(this).apply { addView(root) }
     }
 
     private fun refresh() {

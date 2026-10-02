@@ -7,7 +7,13 @@ import { normalizeJournalPayload } from './journal-store.mjs';
 import { createTurnCredentials } from './turn-cred.mjs';
 import { handleWebSocketUpgrade } from './websocket.mjs';
 
-export function createCanaryServer({ canaryKey = '', journalStore, turn = null, logger = console } = {}) {
+export function createCanaryServer({
+  canaryKey = '',
+  journalStore,
+  turn = null,
+  logger = console,
+  websocketRuntime = null,
+} = {}) {
   if (!journalStore) {
     throw new Error('journalStore is required');
   }
@@ -92,8 +98,19 @@ export function createCanaryServer({ canaryKey = '', journalStore, turn = null, 
     }
   });
 
+  const webSocketSockets = new Set();
+  server.closeCanaryWebSockets = () => {
+    for (const socket of webSocketSockets) {
+      socket.destroy();
+    }
+    webSocketSockets.clear();
+  };
+
   server.on('upgrade', (request, socket) => {
-    handleWebSocketUpgrade(request, socket, { path: CANARY_PATH, logger });
+    webSocketSockets.add(socket);
+    socket.once('close', () => webSocketSockets.delete(socket));
+    socket.once('error', () => webSocketSockets.delete(socket));
+    handleWebSocketUpgrade(request, socket, { path: CANARY_PATH, logger, runtime: websocketRuntime });
   });
 
   return server;

@@ -10,6 +10,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.util.zip.CRC32
+import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
@@ -32,6 +33,17 @@ object CanaryUploadSchedule {
         if (hour in 0..23 && hour % 6 == 0) listOf(20 * 1024, 120 * 1024, 500 * 1024) else emptyList()
 
     fun includeDailyPayload(hour: Int): Boolean = hour == 0
+}
+
+object CanaryFullUploadPlanner {
+    const val MANUAL_PAYLOAD_BYTES = 120 * 1024
+
+    fun payloadsForRun(wakeupMethod: String, nowMs: Long, includeDailyUpload: Boolean): List<Int> {
+        if (wakeupMethod == "manual_full") return listOf(MANUAL_PAYLOAD_BYTES)
+        val utcHour = Instant.ofEpochMilli(nowMs).atZone(java.time.ZoneOffset.UTC).hour
+        return CanaryUploadSchedule.smallPayloadsForUtcHour(utcHour) +
+            if (includeDailyUpload) listOf(2 * 1024 * 1024) else emptyList()
+    }
 }
 
 object CanaryLatencyStats {
@@ -93,15 +105,148 @@ data class LatencyAggregate(
     val lost: Int
 )
 
-object CanaryDohParser {
-    fun parseValidAddresses(json: String): List<String> {
-        val answer = JSONObject(json).optJSONArray("Answer") ?: return emptyList()
-        return (0 until answer.length()).mapNotNull { index ->
-            val data = answer.optJSONObject(index)?.optString("data").orEmpty()
-            runCatching { InetAddress.getByName(data) }.getOrNull()
-        }.filterNot(CanaryAddressClassifier::isInvalidCanaryAddress)
+object CanaryDohMessage {
+    const val TYPE_A = 1
+    const val TYPE_AAAA = 28
+    private const val CLASS_IN = 1
+
+    fun queryParam(host: String, type: Int = TYPE_A): String =
+        Base64.getUrlEncoder().withoutPadding().encodeToString(query(host, type))
+
+    fun query(host: String, type: Int = TYPE_A, id: Int = 0x4843): ByteArray {
+        val out = ByteArrayOutputStream()
+        writeU16(out, id)
+        writeU16(out, 0x0100)
+        writeU16(out, 1)
+        writeU16(out, 0)
+        writeU16(out, 0)
+        writeU16(out, 0)
+        host.trim('.').split('.').filter(String::isNotBlank).forEach { label ->
+            require(label.length in 1..63) { "Invalid DNS label length." }
+            val bytes = label.toByteArray(Charsets.UTF_8)
+            out.write(bytes.size)
+            out.write(bytes)
+        }
+        out.write(0)
+        writeU16(out, type)
+        writeU16(out, CLASS_IN)
+        return out.toByteArray()
+    }
+
+    fun parseValidAddresses(message: ByteArray): List<String> {
+        if (message.size < 12) return emptyList()
+        val questionCount = u16(message, 4)
+        val answerCount = u16(message, 6)
+        var offset = 12
+        repeat(questionCount) {
+            offset = skipName(message, offset) ?: return emptyList()
+            if (offset + 4 > message.size) return emptyList()
+            offset += 4
+        }
+        val addresses = mutableListOf<InetAddress>()
+        repeat(answerCount) {
+            offset = skipName(message, offset) ?: return emptyList()
+            if (offset + 10 > message.size) return emptyList()
+            val type = u16(message, offset)
+            val klass = u16(message, offset + 2)
+            val size = u16(message, offset + 8)
+            val dataOffset = offset + 10
+            val dataEnd = dataOffset + size
+            if (dataEnd > message.size) return emptyList()
+            if (klass == CLASS_IN && ((type == TYPE_A && size == 4) || (type == TYPE_AAAA && size == 16))) {
+                addresses += InetAddress.getByAddress(message.copyOfRange(dataOffset, dataEnd))
+            }
+            offset = dataEnd
+        }
+        return addresses.filterNot(CanaryAddressClassifier::isInvalidCanaryAddress)
             .mapNotNull { it.hostAddress }
     }
+
+    private fun skipName(message: ByteArray, start: Int): Int? {
+        var offset = start
+        var jumps = 0
+        while (offset < message.size) {
+            val length = message[offset].toInt() and 0xff
+            if (length == 0) return offset + 1
+            if ((length and 0xC0) == 0xC0) {
+                if (offset + 1 >= message.size || jumps++ > 8) return null
+                return offset + 2
+            }
+            if ((length and 0xC0) != 0) return null
+            if (offset + 1 + length > message.size) return null
+            offset += 1 + length
+        }
+        return null
+    }
+
+    private fun u16(bytes: ByteArray, offset: Int): Int =
+        ((bytes[offset].toInt() and 0xff) shl 8) or (bytes[offset + 1].toInt() and 0xff)
+
+    private fun writeU16(out: ByteArrayOutputStream, value: Int) {
+        out.write((value ushr 8) and 0xff)
+        out.write(value and 0xff)
+    }
+}
+
+object CanaryTurnCredentialParser {
+    private const val MAX_TTL_SEC = 24 * 60 * 60
+    private val usernamePattern = Regex("^([1-9][0-9]*):(.+)$")
+
+    fun parse(json: String, nowEpochSec: Long): TurnCredential {
+        val obj = JSONObject(json)
+        val username = obj.optString("username").trim()
+        val password = listOf(obj.optString("credential"), obj.optString("password"))
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?: error("TURN credential response missing credential")
+        val ttlSec = obj.optLong("ttlSec", -1L)
+        validate(username, ttlSec, nowEpochSec)
+        return TurnCredential(username = username, password = password, ttlSec = ttlSec)
+    }
+
+    private fun validate(username: String, ttlSec: Long, nowEpochSec: Long) {
+        val match = usernamePattern.matchEntire(username)
+            ?: error("TURN credential username is not expiry-prefixed")
+        val expiresAt = match.groupValues[1].toLongOrNull()
+            ?: error("TURN credential username expiry is invalid")
+        check(match.groupValues[2].isNotBlank()) { "TURN credential username suffix is empty" }
+        check(ttlSec in 1..MAX_TTL_SEC) { "TURN credential ttlSec is invalid" }
+        check(expiresAt > nowEpochSec) { "TURN credential is expired" }
+    }
+}
+
+data class TurnCredential(val username: String, val password: String, val ttlSec: Long)
+
+data class CanaryHeartbeatStatusState(
+    val intervalSec: Int,
+    val connectedAtMs: Long,
+    val pingsSent: Int = 0,
+    val pongsMissed: Int = 0,
+    val alive: Boolean = true
+) {
+    fun ageSec(nowMs: Long): Long = ((nowMs - connectedAtMs).coerceAtLeast(0L)) / 1000L
+    fun sentPing(missed: Boolean): CanaryHeartbeatStatusState =
+        copy(
+            pingsSent = pingsSent + 1,
+            pongsMissed = pongsMissed + if (missed) 1 else 0,
+            alive = !missed
+        )
+
+    fun dead(): CanaryHeartbeatStatusState = copy(alive = false)
+}
+
+object CanaryHeartbeatPayload {
+    fun disconnectAfterSec(intervalSec: Int): Int =
+        kotlin.math.round(intervalSec * 2.5).toInt()
+
+    fun text(intervalSec: Int, connectionId: String, sentAtMs: Long): String =
+        JSONObject()
+            .put("type", "ws_heartbeat")
+            .put("intervalSec", intervalSec)
+            .put("disconnectAfterSec", disconnectAfterSec(intervalSec))
+            .put("connectionId", connectionId)
+            .put("sentAtMs", sentAtMs)
+            .toString()
 }
 
 object CanaryPayloadMetrics {
@@ -119,6 +264,13 @@ object CanarySecretScrubber {
             ?.replace(bearer, "Authorization=<redacted>")
             ?.replace(turnUsername, "<turn-username>")
             ?.take(200)
+}
+
+object CanaryServiceReachUiErrorSummary {
+    fun format(value: String?): String? =
+        CanarySecretScrubber.safeError(value)
+            ?.replace(Regex("\\s+"), " ")
+            ?.take(120)
 }
 
 object CanaryTurnMessage {
