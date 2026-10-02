@@ -53,3 +53,13 @@ Status: accepted
 Date: 2026-09-30
 
 Notes: Steps C–E were accepted after a 12.5-hour field run with approximately 96% scheduled-run completion and 100% Canary-server availability. The light network run uses pinned TLS and echo-only WebSocket keepalive; the app retains a Room-backed 30-day journal and provides native status/readiness plus manual FileProvider journal export. v4.0.4 is installed on field devices, including `tm-1` in Turkmenistan. Follow-on v4.0.5 calibration and log-correlation work is tracked separately as TASK-001d-2I/2J.
+
+## TASK-001d — Canary v4.1.3
+
+Status: сбор данных
+
+Commit: `4be3c696cf942ffa7fbf9f30d6730a4986153b2f` (`origin/codex/task-001d-canary-v4`)
+
+Notes: v4.1.3 APK собран, подписан и передан Арслану; установка на полевые устройства ещё не подтверждена. После установки записать: `TASK-001d — сбор данных, неделя с <дата установки 4.1.3>`.
+
+Freeze: новых функций не добавлять. Исправления допускаются только по прямой команде Арслана и только если ломается сбор данных. Сервер Canary/nginx/coturn не менять и не перезапускать без отдельной команды Арслана. Во время сбора — только ежедневное read-only наблюдение; архив журналов обоих устройств будет собран через неделю.
