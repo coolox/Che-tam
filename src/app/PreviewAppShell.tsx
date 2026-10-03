@@ -56,13 +56,10 @@ import {
 import {
   FAMILY_MEMBERS,
   INITIAL_CALL_LOG,
-  INITIAL_CHATS,
-  INITIAL_MESSAGES,
   THEME_OPTIONS,
   TRAFFIC_MODES,
 } from '../ui/demoData';
 import {
-  appendOutgoingMessage,
   clearChatSearchQuery,
   clearChatSelection,
   clearFamilySelection,
@@ -87,6 +84,12 @@ import {
 import { ThemeProvider, useTheme } from '../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../ui/tokens';
 import { CallLogEntry, Chat, Message, TabKey, TrafficModeKey } from '../ui/types';
+import {
+  EMPTY_CHATS_TEXT,
+  EMPTY_CONVERSATION_TEXT,
+  LOCAL_LOADING_TEXT,
+  type LocalDataSnapshot,
+} from '../messages/localMessageStore';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
@@ -102,24 +105,28 @@ const PIP_HEIGHT = 148;
 const PIP_CONTROLS_GAP = spacing.lg;
 const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
 
-export default function App() {
+type PreviewAppShellProps = {
+  snapshot: LocalDataSnapshot;
+  onClearUnread: (chatId: string) => Promise<void>;
+  onRetry: () => Promise<void>;
+};
+
+export default function PreviewAppShell(props: PreviewAppShellProps) {
   return (
     <SafeAreaProvider>
       <KeyboardProvider>
         <ThemeProvider>
-          <ThemedApp />
+          <ThemedApp {...props} />
         </ThemeProvider>
       </KeyboardProvider>
     </SafeAreaProvider>
   );
 }
 
-function ThemedApp() {
+function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
-  const [selectedChatId, setSelectedChatId] = useState(INITIAL_CHATS[0].id);
-  const [chats, setChats] = useState(INITIAL_CHATS);
-  const [messagesByChat, setMessagesByChat] = useState(INITIAL_MESSAGES);
+  const [selectedChatId, setSelectedChatId] = useState('');
   const [chatSearch, setChatSearch] = useState({ active: false, query: '' });
   const [composer, setComposer] = useState('');
   const [trafficMode, setTrafficMode] = useState<TrafficModeKey>('economy');
@@ -135,9 +142,11 @@ function ThemedApp() {
 
   const { mode } = useTheme();
   const styles = useStyles();
+  const chats = snapshot.chats;
+  const messagesByChat = snapshot.messagesByChat;
   const orderedChats = useMemo(() => getOrderedChats(chats, chatSearch.query, messagesByChat), [chats, chatSearch.query, messagesByChat]);
   const selectedChat = chats.find(chat => chat.id === selectedChatId) ?? chats[0];
-  const selectedMessages = messagesByChat[selectedChat.id] ?? [];
+  const selectedMessages = selectedChat ? messagesByChat[selectedChat.id] ?? [] : [];
   const callLog = INITIAL_CALL_LOG;
 
   const goBack = () => {
@@ -174,12 +183,20 @@ function ThemedApp() {
     return () => subscription.remove();
   }, [screen, activeTab, selectedChatIds.length, selectedFamilyIds.length, chatSearch.active]);
 
+  useEffect(() => {
+    if (selectedChatId && !chats.some(chat => chat.id === selectedChatId)) {
+      setSelectedChatId(chats[0]?.id ?? '');
+      if (screen === 'conversation' || screen === 'call') setScreen('home');
+    }
+  }, [chats, screen, selectedChatId]);
+
   const enterDemo = () => {
     setActiveTab('chats');
     setScreen('home');
   };
 
-  const openChat = (chatId: string) => {
+  const openChat = async (chatId: string) => {
+    await onClearUnread(chatId);
     setSelectedChatId(chatId);
     setScreen('conversation');
   };
@@ -242,22 +259,6 @@ function ThemedApp() {
     setActiveTab(current => selectTab(current, tab));
   };
 
-  const sendMessage = () => {
-    const result = appendOutgoingMessage(selectedMessages, composer, new Date('2026-09-22T12:30:00.000Z'));
-    if (!result.added) {
-      return;
-    }
-    setMessagesByChat(current => ({ ...current, [selectedChat.id]: result.messages }));
-    setChats(current =>
-      current.map(chat =>
-        chat.id === selectedChat.id
-          ? { ...chat, lastMessage: result.message.text, time: formatMessageTime(result.message.createdAt), unread: 0 }
-          : chat,
-      ),
-    );
-    setComposer('');
-  };
-
   const startCall = (mode: CallMode) => {
     setCallMode(mode);
     setCameraOff(false);
@@ -272,6 +273,7 @@ function ThemedApp() {
 
   const startFamilyCall = (memberName: string, mode: CallMode) => {
     const familyChat = chats.find(chat => chat.name === memberName);
+    if (!familyChat && !chats[0]) return;
     setSelectedChatId(familyChat?.id ?? chats[0].id);
     startCall(mode);
   };
@@ -286,6 +288,8 @@ function ThemedApp() {
         <HomeScreen
           activeTab={activeTab}
           chats={orderedChats}
+          dataErrorText={snapshot.errorText}
+          dataStatus={snapshot.status}
           callLog={callLog}
           connectionHints={connectionHints}
           query={chatSearch.query}
@@ -298,6 +302,7 @@ function ThemedApp() {
           onCancelSearch={cancelChatSearch}
           onClearSearch={clearChatSearch}
           onOpenChat={openChat}
+          onRetryLocalData={() => void onRetry()}
           onOpenSearch={startChatSearch}
           onQuery={updateChatSearch}
           onSelectTab={selectHomeTab}
@@ -311,18 +316,20 @@ function ThemedApp() {
           onToggleSelectedFamilyMember={toggleSelectedFamilyMember}
         />
       ) : null}
-      {screen === 'conversation' ? (
+      {screen === 'conversation' && selectedChat ? (
         <ConversationScreen
           chat={selectedChat}
           composer={composer}
+          dataErrorText={snapshot.errorText}
+          dataStatus={snapshot.status}
           messages={selectedMessages}
           onBack={() => setScreen('home')}
           onComposer={setComposer}
-          onSend={sendMessage}
           onStartCall={startCall}
+          onRetryLocalData={() => void onRetry()}
         />
       ) : null}
-      {screen === 'call' ? (
+      {screen === 'call' && selectedChat ? (
         <CallScreen
           cameraOff={cameraOff}
           chat={selectedChat}
@@ -366,8 +373,8 @@ function WelcomeScreen({
         <View style={styles.infoPanel}>
           <Text style={styles.infoTitle}>Только локальный preview</Text>
           <Text style={styles.bodyText}>
-            Здесь нет аккаунта, сервера, камеры или микрофона. Демо показывает будущий пользовательский путь: семейные чаты,
-            локальную отправку текста, макеты звонков и настройки расхода трафика.
+            Здесь нет аккаунта, сервера, камеры или микрофона. Демо показывает семейные чаты,
+            локальные сообщения, макеты звонков и настройки расхода трафика.
           </Text>
         </View>
       ) : null}
@@ -378,6 +385,8 @@ function WelcomeScreen({
 function HomeScreen({
   activeTab,
   chats,
+  dataErrorText,
+  dataStatus,
   callLog,
   connectionHints,
   query,
@@ -390,6 +399,7 @@ function HomeScreen({
   onCancelSearch,
   onClearSearch,
   onOpenChat,
+  onRetryLocalData,
   onOpenSearch,
   onQuery,
   onSelectTab,
@@ -404,6 +414,8 @@ function HomeScreen({
 }: {
   activeTab: TabKey;
   chats: Chat[];
+  dataErrorText: string | null;
+  dataStatus: LocalDataSnapshot['status'];
   callLog: CallLogEntry[];
   connectionHints: boolean;
   query: string;
@@ -416,6 +428,7 @@ function HomeScreen({
   onCancelSearch: () => void;
   onClearSearch: () => void;
   onOpenChat: (chatId: string) => void;
+  onRetryLocalData: () => void;
   onOpenSearch: () => void;
   onQuery: (value: string) => void;
   onSelectTab: (tab: TabKey) => void;
@@ -451,10 +464,13 @@ function HomeScreen({
       )}
       <ScrollView contentContainerStyle={[styles.content, activeTab !== 'settings' && styles.topLevelListContent]}>
         {activeTab === 'chats' ? (
-          <ChatList
+          <LocalChatsPanel
             chats={chats}
+            errorText={dataErrorText}
+            status={dataStatus}
             selectedChatIds={selectedChatIds}
             onOpenChat={onOpenChat}
+            onRetry={onRetryLocalData}
             onStartSelectingChat={onStartSelectingChat}
             onToggleSelectedChat={onToggleSelectedChat}
           />
@@ -624,6 +640,32 @@ function AboutBrand() {
   );
 }
 
+function LocalChatsPanel({
+  chats,
+  errorText,
+  status,
+  selectedChatIds,
+  onOpenChat,
+  onRetry,
+  onStartSelectingChat,
+  onToggleSelectedChat,
+}: {
+  chats: Chat[];
+  errorText: string | null;
+  status: LocalDataSnapshot['status'];
+  selectedChatIds: string[];
+  onOpenChat: (chatId: string) => void;
+  onRetry: () => void;
+  onStartSelectingChat: (chatId: string) => void;
+  onToggleSelectedChat: (chatId: string) => void;
+}) {
+  const styles = useStyles();
+  if (status === 'loading') return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{LOCAL_LOADING_TEXT}</Text></View>;
+  if (status === 'error') return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{errorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetry} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>;
+  if (!chats.length) return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{EMPTY_CHATS_TEXT}</Text></View>;
+  return <ChatList chats={chats} selectedChatIds={selectedChatIds} onOpenChat={onOpenChat} onStartSelectingChat={onStartSelectingChat} onToggleSelectedChat={onToggleSelectedChat} />;
+}
+
 function ChatList({
   chats,
   selectedChatIds,
@@ -747,19 +789,23 @@ function ChatListRow({
 function ConversationScreen({
   chat,
   composer,
+  dataErrorText,
+  dataStatus,
   messages,
   onBack,
   onComposer,
-  onSend,
   onStartCall,
+  onRetryLocalData,
 }: {
   chat: Chat;
   composer: string;
+  dataErrorText: string | null;
+  dataStatus: LocalDataSnapshot['status'];
   messages: Message[];
   onBack: () => void;
   onComposer: (value: string) => void;
-  onSend: () => void;
   onStartCall: (mode: CallMode) => void;
+  onRetryLocalData: () => void;
 }) {
   const { colors } = useTheme();
   const styles = useStyles();
@@ -807,7 +853,12 @@ function ConversationScreen({
           inverted
           keyboardShouldPersistTaps="handled"
           keyExtractor={message => message.id}
-          ListFooterComponent={<Text style={styles.dateDivider}>Сегодня</Text>}
+          ListFooterComponent={
+            dataStatus === 'loading' ? <Text style={styles.dateDivider}>{LOCAL_LOADING_TEXT}</Text>
+              : dataStatus === 'error' ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{dataErrorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetryLocalData} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>
+                : messages.length === 0 ? <Text style={styles.dateDivider}>{EMPTY_CONVERSATION_TEXT}</Text>
+                  : <Text style={styles.dateDivider}>Сегодня</Text>
+          }
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} />}
           style={styles.messageList}
@@ -832,7 +883,8 @@ function ConversationScreen({
         <Pressable
           accessibilityLabel={composerState.action === 'send' ? 'Отправить сообщение' : 'Голосовое сообщение'}
           accessibilityRole="button"
-          onPress={composerState.action === 'send' ? onSend : undefined}
+          accessibilityHint="Локальный preview: отправка сообщений пока недоступна"
+          onPress={undefined}
           style={styles.composerAction}
         >
           <Animated.View
@@ -859,6 +911,7 @@ function ConversationScreen({
           </Animated.View>
         </Pressable>
       </View>
+      <Text accessibilityLabel="Отправка сообщений недоступна" style={styles.localOnlyComposerNote}>Локальный preview: отправка сообщений пока недоступна.</Text>
     </KeyboardAvoidingView>
   );
 }
@@ -1893,6 +1946,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   composerAction: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.full, height: 48, justifyContent: 'center', width: 48 },
   composerActionIcon: { position: 'absolute' },
+  localOnlyComposerNote: { color: colors.textMuted, fontSize: 11, paddingBottom: 4, paddingHorizontal: spacing.md, textAlign: 'center' },
   audioCallScreen: {
     alignItems: 'center',
     backgroundColor: colors.callBackground,

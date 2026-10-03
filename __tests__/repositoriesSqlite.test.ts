@@ -39,6 +39,16 @@ describe('SQLite repositories', () => {
     expect((await repositories.listMessages('c1')).map((item) => item.id)).toEqual(['m-old', 'm-a', 'm-b']);
   });
 
+  it('clears a chat unread count persistently', async () => {
+    const { repositories } = await setup();
+    await repositories.upsertChat({ id: 'c1', title: 'Chat', kind: 'direct', lastMessageAt: now, unreadCount: 3, updatedAt: now });
+    await repositories.clearChatUnread('c1', '2026-10-03T12:01:00.000Z');
+
+    expect(await repositories.listChats()).toEqual([{
+      id: 'c1', title: 'Chat', kind: 'direct', lastMessageAt: now, unreadCount: 0, updatedAt: '2026-10-03T12:01:00.000Z',
+    }]);
+  });
+
   it('rolls back both message and outbox changes when deterministic enqueue failure is injected', async () => {
     const { database, repositories } = await setup();
     database.failNext('insert into outbox');

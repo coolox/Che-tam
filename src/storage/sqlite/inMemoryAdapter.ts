@@ -37,8 +37,16 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     const index = /create index if not exists ([a-z_]+)/.exec(normalized)?.[1];
     if (index) { this.state.indexes.add(index); return { changes: 0 }; }
     const inserted = /insert(?: or ignore)? into ([a-z_]+)/.exec(normalized)?.[1];
-    if (!inserted) throw new Error(`Unsupported fake SQL: ${sql}`);
-    return this.insert(inserted, normalized, params);
+    if (inserted) return this.insert(inserted, normalized, params);
+    const updated = /update ([a-z_]+) set/.exec(normalized)?.[1];
+    if (updated === 'chats' && normalized.includes('unread_count = 0')) {
+      const row = this.rows('chats').find((candidate) => candidate.id === params[1]);
+      if (!row) return { changes: 0 };
+      row.unread_count = 0;
+      row.updated_at = params[0];
+      return { changes: 1 };
+    }
+    throw new Error(`Unsupported fake SQL: ${sql}`);
   }
 
   async query<T extends Record<string, SqlValue>>(sql: string, params: readonly SqlValue[] = []): Promise<T[]> {

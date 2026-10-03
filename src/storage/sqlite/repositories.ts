@@ -118,6 +118,10 @@ export class SqliteRepositories {
     return (await this.database.query<Row>('SELECT * FROM chats ORDER BY last_message_at IS NULL ASC, last_message_at DESC, id ASC')).map(mapChat);
   }
 
+  async clearChatUnread(chatId: string, updatedAt: string): Promise<void> {
+    await this.database.execute('UPDATE chats SET unread_count = 0, updated_at = ? WHERE id = ?', [updatedAt, chatId]);
+  }
+
   async listMessages(chatId: string): Promise<StoredMessage[]> {
     return (await this.database.query<Row>('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC', [chatId])).map(mapMessage);
   }
