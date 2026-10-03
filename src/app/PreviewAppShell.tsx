@@ -90,6 +90,7 @@ import {
   LOCAL_LOADING_TEXT,
   type LocalDataSnapshot,
 } from '../messages/localMessageStore';
+import { useConnectionStatus } from '../hooks/useConnectionStatus';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
@@ -809,6 +810,7 @@ function ConversationScreen({
 }) {
   const { colors } = useTheme();
   const styles = useStyles();
+  const connection = useConnectionStatus();
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
   const composerState = getComposerState(composer);
   const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
@@ -832,8 +834,14 @@ function ConversationScreen({
           <Text numberOfLines={1} style={styles.chatName}>
             {chat.name}
           </Text>
-          <Text numberOfLines={1} style={styles.headerSubtitle}>
-            в сети
+          <Text
+            accessibilityLabel={connection.accessibilityLabel}
+            accessibilityLiveRegion="polite"
+            accessibilityRole="text"
+            numberOfLines={1}
+            style={styles.connectionBanner}
+          >
+            {connection.text}
           </Text>
         </View>
         <HeaderIconButton accessibilityLabel="Аудиозвонок" icon={<Phone color={colors.accent} size={22} />} onPress={() => onStartCall('audio')} />
@@ -1847,6 +1855,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   headerIconButton: { alignItems: 'center', borderRadius: radius.full, height: 48, justifyContent: 'center', width: 48 },
   conversationTitle: { flex: 1, minWidth: 0 },
+  connectionBanner: { color: colors.textSecondary, fontSize: typography.xs, fontWeight: '700' },
   messageArea: { backgroundColor: colors.background, flex: 1 },
   messageList: { flex: 1 },
   messages: { flexGrow: 1, gap: spacing.sm, justifyContent: 'flex-start', padding: spacing.md, paddingBottom: 92 },
