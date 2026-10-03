@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Чё-Там",
-    "slug": "hearth-canary",
-    "version": "0.5.0",
+    "slug": "che-tam",
+    "version": "0.6.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [
@@ -13,7 +13,7 @@
       "supportsTablet": false
     },
     "android": {
-      "package": "net.hearth.canary",
+      "package": "net.hearth.chetam",
       "versionCode": 2,
       "adaptiveIcon": {
         "foregroundImage": "./assets/brand/che-tam-brand-mark.png",

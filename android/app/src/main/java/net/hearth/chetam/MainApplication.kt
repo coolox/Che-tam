@@ -1,4 +1,4 @@
-package net.hearth.canary
+package net.hearth.chetam
 
 import android.app.Application
 import android.content.res.Configuration

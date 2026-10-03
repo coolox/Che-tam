@@ -26,7 +26,7 @@ For local mock verification, run a local HTTPS endpoint that returns a small 2xx
 
 ## Android Build
 
-This task configures the Android package as `net.hearth.canary` in `app.json`.
+This task configures the Android package in `app.json`.
 
 Operator build options:
 

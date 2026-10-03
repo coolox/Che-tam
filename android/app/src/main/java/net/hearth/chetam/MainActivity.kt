@@ -1,4 +1,4 @@
-package net.hearth.canary
+package net.hearth.chetam
 
 import android.os.Build
 import android.os.Bundle
