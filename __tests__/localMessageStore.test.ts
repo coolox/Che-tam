@@ -1,7 +1,17 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
-import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
+import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
 
 describe('local message store', () => {
+  it('formats chat-list times in the selected device time zone', () => {
+    const instant = '2026-01-15T12:00:00.000Z';
+    const istanbul = formatChatListTime(instant, { timeZone: 'Europe/Istanbul' });
+    const ashgabat = formatChatListTime(instant, { timeZone: 'Asia/Ashgabat' });
+
+    expect(istanbul).toBe('15:00');
+    expect(ashgabat).toBe('17:00');
+    expect(istanbul).not.toBe(ashgabat);
+  });
+
   it('migrates, seeds only once, and reads chats/messages from repositories', async () => {
     const database = new InMemorySqliteDatabase();
     const store = createLocalMessageStore(async () => database);

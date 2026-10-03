@@ -11,6 +11,7 @@ function cloneState(state: State): State {
 export class InMemorySqliteDatabase implements SqlDatabase {
   private state: State = { tables: new Set(), indexes: new Set(), rows: new Map() };
   private failNextMatching: string | null = null;
+  private foreignKeysEnabled = false;
 
   failNext(statementFragment: string): void { this.failNextMatching = statementFragment.toLowerCase(); }
   tableNames(): string[] { return [...this.state.tables].sort(); }
@@ -31,6 +32,10 @@ export class InMemorySqliteDatabase implements SqlDatabase {
   async execute(sql: string, params: readonly SqlValue[] = []): Promise<SqlResult> {
     const normalized = sql.replace(/\s+/g, ' ').trim().toLowerCase();
     if (this.failNextMatching !== null && normalized.includes(this.failNextMatching)) { this.failNextMatching = null; throw new Error(`Injected failure for ${normalized}`); }
+    if (normalized === 'pragma foreign_keys = on') {
+      this.foreignKeysEnabled = true;
+      return { changes: 0 };
+    }
     if (normalized.startsWith('pragma ')) return { changes: 0 };
     const table = /create table if not exists ([a-z_]+)/.exec(normalized)?.[1];
     if (table) { this.addTable(table); return { changes: 0 }; }
@@ -68,6 +73,9 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     const columns = /\(([^)]+)\) values/.exec(sql)?.[1]?.split(',').map((value) => value.trim());
     if (!columns) throw new Error(`Unsupported fake insert: ${sql}`);
     const row = Object.fromEntries(columns.map((column, index) => [column, params[index]])) as Row;
+    if (this.foreignKeysEnabled && table === 'messages' && !this.rows('chats').some((chat) => chat.id === row.chat_id)) {
+      throw new Error('FOREIGN KEY constraint failed');
+    }
     const rows = this.rows(table);
     const key = table === 'schema_migrations' ? 'version' : table === 'profiles' || table === 'chats' || table === 'messages' ? (table === 'messages' ? 'client_message_id' : 'id') : table === 'sync_cursors' ? 'scope' : table === 'endpoint_cache' ? 'endpoint_id' : table === 'outbox' ? 'client_message_id' : null;
     const existing = key === null ? undefined : rows.find((candidate) => candidate[key] === row[key]);

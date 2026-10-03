@@ -15,6 +15,16 @@ describe('SQLite schema migration', () => {
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [1])).toEqual([{ version: 1, applied_at: timestamp }]);
   });
 
+  it('allows unknown message chat IDs until the foreign-key pragma, then rejects them', async () => {
+    const database = new InMemorySqliteDatabase();
+    await database.execute('CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY)');
+    await database.execute('CREATE TABLE IF NOT EXISTS messages (chat_id TEXT NOT NULL REFERENCES chats(id))');
+
+    await expect(database.execute('INSERT INTO messages(chat_id) VALUES (?)', ['missing-before-pragma'])).resolves.toEqual({ changes: 1 });
+    await database.execute('PRAGMA foreign_keys = ON');
+    await expect(database.execute('INSERT INTO messages(chat_id) VALUES (?)', ['missing-after-pragma'])).rejects.toThrow('FOREIGN KEY constraint failed');
+  });
+
   it('is idempotent and retains rows written after the first migration', async () => {
     const database = new InMemorySqliteDatabase();
     await migrateDatabase(database, timestamp);

@@ -16,6 +16,14 @@ async function setup() {
 }
 
 describe('SQLite repositories', () => {
+  it('rejects a message for an unknown chat after foreign keys have been enabled', async () => {
+    const database = new InMemorySqliteDatabase();
+    await migrateDatabase(database, now);
+    const repositories = createSqliteRepositories(database);
+
+    await expect(repositories.upsertMessage(message)).rejects.toThrow('FOREIGN KEY constraint failed');
+  });
+
   it('keeps the original message id, its receipt, and one outbox item for repeated client_message_id', async () => {
     const { database, repositories } = await setup();
     await repositories.saveMessageAndEnqueue(message, outbox);

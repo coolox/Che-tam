@@ -1,3 +1,4 @@
+import * as SQLite from 'expo-sqlite';
 import type { SqlDatabase, SqlDatabaseFactory, SqlExecutor, SqlResult, SqlValue } from './contracts';
 
 /**
@@ -6,8 +7,8 @@ import type { SqlDatabase, SqlDatabaseFactory, SqlExecutor, SqlResult, SqlValue 
  */
 export function createExpoSqliteDatabaseFactory(): SqlDatabaseFactory {
   return async (databaseName) => {
-    const SQLite = await import('expo-sqlite');
     const database = await SQLite.openDatabaseAsync(databaseName);
+    await database.runAsync('PRAGMA foreign_keys = ON');
 
     return {
       execute: async (sql: string, params: readonly SqlValue[] = []): Promise<SqlResult> => {

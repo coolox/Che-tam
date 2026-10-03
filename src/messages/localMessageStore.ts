@@ -47,6 +47,10 @@ function messageToViewModel(message: StoredMessage): Message {
   };
 }
 
+export function formatChatListTime(timestamp: string, options: Intl.DateTimeFormatOptions = {}): string {
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', ...options }).format(new Date(timestamp));
+}
+
 function chatToViewModel(chat: StoredChat, lastMessage: string): Chat {
   return {
     id: chat.id,
@@ -54,7 +58,7 @@ function chatToViewModel(chat: StoredChat, lastMessage: string): Chat {
     initials: initials(chat.title),
     avatarColor: avatarColor(chat.id),
     lastMessage,
-    time: chat.lastMessageAt ? new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }).format(new Date(chat.lastMessageAt)) : '',
+    time: chat.lastMessageAt ? formatChatListTime(chat.lastMessageAt) : '',
     unread: chat.unreadCount,
     trafficLabel: 'Локальные сообщения',
     pinned: false,
