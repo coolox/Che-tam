@@ -14,7 +14,7 @@ export type NetworkAvailabilitySource = {
   addEventListener(listener: (available: boolean) => void): () => void;
 };
 
-const netInfoSource: NetworkAvailabilitySource = {
+export const netInfoSource: NetworkAvailabilitySource = {
   addEventListener(listener) {
     return NetInfo.addEventListener(state => listener(state.isConnected === true));
   },

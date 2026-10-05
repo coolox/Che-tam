@@ -103,6 +103,7 @@ type PreviewAppShellProps = {
   snapshot: LocalDataSnapshot;
   onClearUnread: (chatId: string) => Promise<void>;
   onRetry: () => Promise<void>;
+  onSendMessage: (chatId: string, draft: string) => Promise<{ sent: boolean; clientMessageId: string | null }>;
 };
 
 export function resolveFamilyCallChatId(chats: Chat[], memberName: string): string | null {
@@ -148,7 +149,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
+function ThemedApp({ snapshot, onClearUnread, onRetry, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -292,6 +293,12 @@ function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
     setScreen('call');
   };
 
+  const sendMessage = async () => {
+    if (!selectedChat) return;
+    const result = await onSendMessage(selectedChat.id, composer);
+    if (result.sent) setComposer('');
+  };
+
   const startCallFromLog = (entry: CallLogEntry) => {
     const action = resolveCallLogAction(chats, entry);
     if (action.type === 'fallback') {
@@ -362,6 +369,7 @@ function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
           messages={selectedMessages}
           onBack={() => setScreen('home')}
           onComposer={setComposer}
+          onSendMessage={sendMessage}
           onStartCall={startCall}
           onRetryLocalData={() => void onRetry()}
         />

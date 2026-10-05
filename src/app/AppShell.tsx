@@ -2,6 +2,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createExpoSqliteDatabaseFactory } from '../storage/sqlite/expoAdapter';
+import { netInfoSource } from '../hooks/useConnectionStatus';
 import { createLocalMessageStore, LOCAL_LOADING_TEXT, type LocalDataSnapshot } from '../messages/localMessageStore';
 import { createAsyncPhoneVerificationPreference, type PhoneVerificationPreference } from '../phoneVerification/preferences';
 import { initialPhoneVerificationState, LOCAL_TEST_CODE, normalizeRussianPhone, phoneVerificationReducer, type PhoneVerificationState } from '../phoneVerification/reducer';
@@ -9,7 +10,9 @@ import { ThemeProvider, useTheme } from '../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../ui/tokens';
 import PreviewAppShell from './PreviewAppShell';
 
-const store = createLocalMessageStore(createExpoSqliteDatabaseFactory());
+const store = createLocalMessageStore(createExpoSqliteDatabaseFactory(), 'che-tam-local.db', {
+  networkAvailabilitySource: netInfoSource,
+});
 
 export const PHONE_SETUP_RETRY_TEXT = 'Попробовать ещё раз';
 export const PHONE_SETUP_PHONE_INPUT_PROPS = {
@@ -148,7 +151,7 @@ export function AppShell() {
   useEffect(() => { const unsubscribe = store.subscribe(() => setSnapshot(store.getSnapshot())); void store.bootstrap(); return unsubscribe; }, []);
   if (verified === null) return <Text>{LOCAL_LOADING_TEXT}</Text>;
   if (!verified) return <SafeAreaProvider><ThemeProvider><PhoneVerificationGate preference={preference} onComplete={() => setVerified(true)} /></ThemeProvider></SafeAreaProvider>;
-  return <PreviewAppShell snapshot={snapshot} onClearUnread={(chatId) => store.clearUnread(chatId)} onRetry={() => store.bootstrap()} />;
+  return <PreviewAppShell snapshot={snapshot} onClearUnread={(chatId) => store.clearUnread(chatId)} onRetry={() => store.bootstrap()} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
 }
 
 const createPhoneStyles = (colors: ThemeColors, topInset: number) => StyleSheet.create({

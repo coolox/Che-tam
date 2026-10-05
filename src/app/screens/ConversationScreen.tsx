@@ -39,6 +39,7 @@ type ConversationScreenProps = {
   messages: Message[];
   onBack: () => void;
   onComposer: (value: string) => void;
+  onSendMessage: () => void;
   onStartCall: (mode: CallMode) => void;
   onRetryLocalData: () => void;
 };
@@ -51,6 +52,7 @@ export function ConversationScreen({
   messages,
   onBack,
   onComposer,
+  onSendMessage,
   onStartCall,
   onRetryLocalData,
 }: ConversationScreenProps) {
@@ -137,8 +139,7 @@ export function ConversationScreen({
         <Pressable
           accessibilityLabel={composerState.action === 'send' ? 'Отправить сообщение' : 'Голосовое сообщение'}
           accessibilityRole="button"
-          accessibilityHint="Локальный preview: отправка сообщений пока недоступна"
-          onPress={undefined}
+          onPress={composerState.action === 'send' ? onSendMessage : undefined}
           style={styles.composerAction}
         >
           <Animated.View
@@ -165,7 +166,6 @@ export function ConversationScreen({
           </Animated.View>
         </Pressable>
       </View>
-      <Text accessibilityLabel="Отправка сообщений недоступна" style={styles.localOnlyComposerNote}>Локальный preview: отправка сообщений пока недоступна.</Text>
     </KeyboardAvoidingView>
   );
 }

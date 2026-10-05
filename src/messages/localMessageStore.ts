@@ -3,6 +3,8 @@ import type { Chat, Message } from '../ui/types';
 import { migrateDatabase } from '../storage/sqlite/migrate';
 import { createSqliteRepositories, type SqliteRepositories, type StoredChat, type StoredMessage } from '../storage/sqlite/repositories';
 import type { SqlDatabaseFactory } from '../storage/sqlite/contracts';
+import { subscribeToNetworkAvailability, type NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
+import { createDebugLocalAckTransport, createLocalOutboxWorker, type LocalOutboxTransport, type LocalOutboxWorker } from './localOutbox';
 
 export const LOCAL_DATA_ERROR_TEXT = 'Не удалось открыть локальные данные. Попробуйте ещё раз.';
 export const LOCAL_LOADING_TEXT = 'Загружаем локальные сообщения…';
@@ -17,17 +19,27 @@ export type LocalDataSnapshot =
 export type LocalMessageStore = {
   bootstrap(): Promise<void>;
   clearUnread(chatId: string): Promise<void>;
+  dispose(): void;
   getSnapshot(): LocalDataSnapshot;
+  sendTextMessage(chatId: string, draft: string): Promise<{ sent: boolean; clientMessageId: string | null }>;
   subscribe(listener: () => void): () => void;
 };
 
 type LocalMessageStoreOptions = {
   developmentSeedEnabled?: boolean;
+  idFactory?: () => string;
+  initialNetworkAvailable?: boolean;
+  networkAvailabilitySource?: NetworkAvailabilitySource;
+  now?: () => Date;
+  transport?: LocalOutboxTransport | null;
 };
 
 const FIXTURE_TIMESTAMP = '2026-09-22T12:00:00.000Z';
 const LOCAL_PROFILE_ID = 'local-self';
 const RELATIVE_PROFILE_ID = 'local-relative';
+const silentNetworkAvailabilitySource: NetworkAvailabilitySource = {
+  addEventListener: () => () => undefined,
+};
 
 function hashErrorText(value: string): string {
   let hash = 0x811c9dc5;
@@ -119,6 +131,15 @@ function isDevelopmentBuild(): boolean {
   return typeof __DEV__ !== 'undefined' && __DEV__;
 }
 
+function createUuid(): string {
+  const randomUuid = globalThis.crypto?.randomUUID;
+  if (randomUuid) return randomUuid.call(globalThis.crypto);
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, marker => {
+    const value = Math.floor(Math.random() * 16);
+    return (marker === 'x' ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
 export function createLocalMessageStore(
   factory: SqlDatabaseFactory,
   databaseName = 'che-tam-local.db',
@@ -126,7 +147,14 @@ export function createLocalMessageStore(
 ): LocalMessageStore {
   let snapshot: LocalDataSnapshot = { status: 'loading', chats: [], messagesByChat: {}, errorText: null };
   let repositories: SqliteRepositories | null = null;
+  let outboxWorker: LocalOutboxWorker | null = null;
+  let networkAvailable = options.initialNetworkAvailable ?? false;
+  let unsubscribeNetworkAvailability: (() => void) | null = null;
   const developmentSeedEnabled = options.developmentSeedEnabled ?? isDevelopmentBuild();
+  const idFactory = options.idFactory ?? createUuid;
+  const networkAvailabilitySource = options.networkAvailabilitySource ?? silentNetworkAvailabilitySource;
+  const now = options.now ?? (() => new Date());
+  const transport = options.transport === undefined ? createDebugLocalAckTransport() : options.transport;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   const setSnapshot = (next: LocalDataSnapshot) => { snapshot = next; notify(); };
@@ -144,6 +172,10 @@ export function createLocalMessageStore(
     setSnapshot({ status: 'ready', chats, messagesByChat, errorText: null });
   }
 
+  function refreshAfterOutboxAck(): void {
+    void refresh().catch(() => undefined);
+  }
+
   return {
     async bootstrap() {
       setSnapshot({ status: 'loading', chats: [], messagesByChat: {}, errorText: null });
@@ -152,9 +184,22 @@ export function createLocalMessageStore(
         await migrateDatabase(database, FIXTURE_TIMESTAMP);
         repositories = createSqliteRepositories(database);
         if (developmentSeedEnabled) await seedDevelopmentFixture(repositories);
+        outboxWorker?.dispose();
+        unsubscribeNetworkAvailability?.();
+        outboxWorker = createLocalOutboxWorker(repositories, transport, { now, onMessageAcked: refreshAfterOutboxAck, online: networkAvailable });
+        unsubscribeNetworkAvailability = subscribeToNetworkAvailability(networkAvailabilitySource, event => {
+          if (event.type === 'networkObserved') networkAvailable = event.available;
+          else networkAvailable = event.type === 'networkRestored';
+          outboxWorker?.setOnline(networkAvailable);
+        });
         await refresh();
+        await outboxWorker.kick();
       } catch (error) {
         repositories = null;
+        unsubscribeNetworkAvailability?.();
+        unsubscribeNetworkAvailability = null;
+        outboxWorker?.dispose();
+        outboxWorker = null;
         setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
       }
     },
@@ -165,6 +210,48 @@ export function createLocalMessageStore(
         await refresh();
       } catch (error) {
         setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
+      }
+    },
+    dispose() {
+      unsubscribeNetworkAvailability?.();
+      unsubscribeNetworkAvailability = null;
+      outboxWorker?.dispose();
+      outboxWorker = null;
+      listeners.clear();
+    },
+    async sendTextMessage(chatId, draft) {
+      if (!repositories) return { sent: false, clientMessageId: null };
+      const body = draft.trim();
+      if (!body) return { sent: false, clientMessageId: null };
+      const createdAt = now().toISOString();
+      const clientMessageId = idFactory();
+      const message: StoredMessage = {
+        id: clientMessageId,
+        chatId,
+        clientMessageId,
+        senderId: LOCAL_PROFILE_ID,
+        body,
+        createdAt,
+        deliveryState: 'queued',
+        updatedAt: createdAt,
+      };
+      try {
+        await repositories.saveMessageAndEnqueue(message, {
+          clientMessageId,
+          chatId,
+          payload: JSON.stringify({ kind: 'text', clientMessageId, chatId, body, createdAt }),
+          state: 'queued',
+          attemptCount: 0,
+          nextAttemptAt: null,
+          createdAt,
+          updatedAt: createdAt,
+        });
+        await refresh();
+        void outboxWorker?.kick();
+        return { sent: true, clientMessageId };
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        return { sent: false, clientMessageId: null };
       }
     },
     getSnapshot: () => snapshot,

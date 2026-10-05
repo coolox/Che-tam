@@ -51,6 +51,27 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       row.updated_at = params[0];
       return { changes: 1 };
     }
+    if (updated === 'chats' && normalized.includes('last_message_at = ?')) {
+      const row = this.rows('chats').find((candidate) => candidate.id === params[2]);
+      if (!row) return { changes: 0 };
+      row.last_message_at = params[0];
+      row.updated_at = params[1];
+      return { changes: 1 };
+    }
+    if (updated === 'messages' && normalized.includes("delivery_state = 'sent'")) {
+      const row = this.rows('messages').find((candidate) => candidate.client_message_id === params[1] && candidate.delivery_state === 'queued');
+      if (!row) return { changes: 0 };
+      row.delivery_state = 'sent';
+      row.updated_at = params[0];
+      return { changes: 1 };
+    }
+    const deleted = /delete from ([a-z_]+)/.exec(normalized)?.[1];
+    if (deleted === 'outbox' && normalized.includes('where client_message_id = ?')) {
+      const rows = this.rows('outbox');
+      const previousLength = rows.length;
+      this.state.rows.set('outbox', rows.filter((row) => row.client_message_id !== params[0]));
+      return { changes: previousLength - this.rows('outbox').length };
+    }
     throw new Error(`Unsupported fake SQL: ${sql}`);
   }
 

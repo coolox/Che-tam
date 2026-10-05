@@ -111,6 +111,10 @@ export class SqliteRepositories {
     await this.database.transaction(async (transaction) => {
       await this.upsertMessageWith(transaction, message);
       await this.enqueueWith(transaction, outbox);
+      await transaction.execute(
+        'UPDATE chats SET last_message_at = ?, updated_at = ? WHERE id = ?',
+        [message.createdAt, message.updatedAt, message.chatId],
+      );
     });
   }
 
@@ -128,6 +132,58 @@ export class SqliteRepositories {
 
   async readOutbox(): Promise<OutboxEntry[]> {
     return (await this.database.query<Row>('SELECT * FROM outbox ORDER BY created_at ASC, client_message_id ASC')).map(mapOutbox);
+  }
+
+  async readNextSendableOutbox(): Promise<OutboxEntry | null> {
+    const rows = await this.database.query<Row>(
+      `SELECT * FROM outbox
+      WHERE state IN ('queued', 'retrying')
+      ORDER BY created_at ASC, client_message_id ASC
+      LIMIT 1`,
+    );
+    return rows[0] ? mapOutbox(rows[0]) : null;
+  }
+
+  async readNextOutboxWakeAt(): Promise<string | null> {
+    const rows = await this.database.query<{ next_attempt_at: string | null }>(
+      `SELECT next_attempt_at FROM outbox
+      WHERE state IN ('queued', 'retrying') AND next_attempt_at IS NOT NULL
+      ORDER BY next_attempt_at ASC, created_at ASC, client_message_id ASC
+      LIMIT 1`,
+    );
+    return rows[0]?.next_attempt_at ?? null;
+  }
+
+  async markOutboxSending(clientMessageId: string, updatedAt: string): Promise<boolean> {
+    const result = await this.database.execute(
+      `UPDATE outbox SET state = 'sending', updated_at = ?
+      WHERE client_message_id = ? AND state IN ('queued', 'retrying')`,
+      [updatedAt, clientMessageId],
+    );
+    return result.changes > 0;
+  }
+
+  async markOutboxRetrying(clientMessageId: string, attemptCount: number, nextAttemptAt: string, updatedAt: string): Promise<void> {
+    await this.database.execute(
+      `UPDATE outbox SET state = 'retrying', attempt_count = ?, next_attempt_at = ?, updated_at = ?
+      WHERE client_message_id = ?`,
+      [attemptCount, nextAttemptAt, updatedAt, clientMessageId],
+    );
+  }
+
+  async deleteOutbox(clientMessageId: string): Promise<void> {
+    await this.database.execute('DELETE FROM outbox WHERE client_message_id = ?', [clientMessageId]);
+  }
+
+  async ackOutboxMessageSent(clientMessageId: string, updatedAt: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        `UPDATE messages SET delivery_state = 'sent', updated_at = ?
+        WHERE client_message_id = ? AND delivery_state = 'queued'`,
+        [updatedAt, clientMessageId],
+      );
+      await transaction.execute('DELETE FROM outbox WHERE client_message_id = ?', [clientMessageId]);
+    });
   }
 
   private async upsertMessageWith(executor: SqlExecutor, message: StoredMessage): Promise<void> {
