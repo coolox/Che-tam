@@ -103,6 +103,7 @@ type PreviewAppShellProps = {
   snapshot: LocalDataSnapshot;
   onClearUnread: (chatId: string) => Promise<void>;
   onRetry: () => Promise<void>;
+  onRetryMessage: (clientMessageId: string) => Promise<{ retried: boolean }>;
   onSendMessage: (chatId: string, draft: string) => Promise<{ sent: boolean; clientMessageId: string | null }>;
 };
 
@@ -149,7 +150,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ snapshot, onClearUnread, onRetry, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ snapshot, onClearUnread, onRetry, onRetryMessage, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -369,6 +370,7 @@ function ThemedApp({ snapshot, onClearUnread, onRetry, onSendMessage }: PreviewA
           messages={selectedMessages}
           onBack={() => setScreen('home')}
           onComposer={setComposer}
+          onRetryMessage={(clientMessageId) => void onRetryMessage(clientMessageId)}
           onSendMessage={sendMessage}
           onStartCall={startCall}
           onRetryLocalData={() => void onRetry()}

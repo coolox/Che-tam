@@ -151,7 +151,7 @@ export function AppShell() {
   useEffect(() => { const unsubscribe = store.subscribe(() => setSnapshot(store.getSnapshot())); void store.bootstrap(); return unsubscribe; }, []);
   if (verified === null) return <Text>{LOCAL_LOADING_TEXT}</Text>;
   if (!verified) return <SafeAreaProvider><ThemeProvider><PhoneVerificationGate preference={preference} onComplete={() => setVerified(true)} /></ThemeProvider></SafeAreaProvider>;
-  return <PreviewAppShell snapshot={snapshot} onClearUnread={(chatId) => store.clearUnread(chatId)} onRetry={() => store.bootstrap()} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
+  return <PreviewAppShell snapshot={snapshot} onClearUnread={(chatId) => store.clearUnread(chatId)} onRetry={() => store.bootstrap()} onRetryMessage={(clientMessageId) => store.retryTextMessage(clientMessageId)} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
 }
 
 const createPhoneStyles = (colors: ThemeColors, topInset: number) => StyleSheet.create({

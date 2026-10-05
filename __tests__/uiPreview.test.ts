@@ -8,6 +8,8 @@ jest.mock('react-native-keyboard-controller', () => ({
   KeyboardAvoidingView: 'KeyboardAvoidingView',
   KeyboardProvider: ({ children }: { children: unknown }) => children,
 }));
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const fs = require('fs') as { readFileSync(path: string, encoding: string): string };
 
 import { INITIAL_CHATS, INITIAL_MESSAGES } from '../src/ui/demoData';
 import {
@@ -180,6 +182,37 @@ describe('UI Preview local behavior', () => {
 
     expect(getMessagePresentation(messages, sentMessage)).toMatchObject({ receipt: 'sent' });
     expect(getMessagePresentation(messages, deliveredMessage)).toMatchObject({ receipt: 'delivered' });
+  });
+
+  it('uses APP-014L local delivery states without deriving delivered/read receipts', () => {
+    const queuedMessage = {
+      id: 'local-queued',
+      chatId: 'parents',
+      clientMessageId: 'cm-local-queued',
+      sender: 'me' as const,
+      text: 'Ждёт',
+      createdAt: '2026-09-22T09:12:00.000Z',
+      delivered: true,
+      read: true,
+      deliveryState: 'queued' as const,
+      kind: 'text' as const,
+    };
+    const notSentMessage = { ...queuedMessage, id: 'local-not-sent', clientMessageId: 'cm-local-not-sent', deliveryState: 'not_sent' as const };
+    const sentMessage = { ...queuedMessage, id: 'local-sent', clientMessageId: 'cm-local-sent', deliveryState: 'sent' as const };
+
+    expect(getMessagePresentation([queuedMessage], queuedMessage)).toMatchObject({ localDeliveryState: 'queued', receipt: 'none' });
+    expect(getMessagePresentation([notSentMessage], notSentMessage)).toMatchObject({ localDeliveryState: 'not_sent', receipt: 'none' });
+    expect(getMessagePresentation([sentMessage], sentMessage)).toMatchObject({ localDeliveryState: 'sent', receipt: 'sent' });
+  });
+
+  it('wires Russian accessibility labels directly on local status controls', () => {
+    const source = fs.readFileSync('src/app/screens/ConversationScreen.tsx', 'utf8');
+
+    expect(source).toContain('accessibilityLabel="В очереди"');
+    expect(source).toContain('accessibilityLabel="Отправлено"');
+    expect(source).toContain('accessibilityLabel="Не отправлено"');
+    expect(source).toContain('accessibilityLabel="Повторить отправку"');
+    expect(source).toContain('>Повторить<');
   });
 
   it('selects bottom tab state locally', () => {

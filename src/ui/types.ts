@@ -19,10 +19,12 @@ export type Chat = {
 export type Message = {
   id: string;
   chatId: string;
+  clientMessageId?: string;
   sender: 'me' | 'relative' | 'event';
   text: string;
   createdAt: string;
   delivered: boolean;
+  deliveryState?: 'queued' | 'sent' | 'not_sent';
   kind?: 'text' | 'call';
   callStatus?: 'completed' | 'missed';
   read?: boolean;

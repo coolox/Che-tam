@@ -1,7 +1,7 @@
 import { calculateRetryDelayMs } from '../transport/backoff';
 import type { OutboxEntry, SqliteRepositories } from '../storage/sqlite/repositories';
 
-export type LocalOutboxTransportResult = { ok: true } | { ok: false; category: 'offline' | 'timeout' | 'failed' };
+export type LocalOutboxTransportResult = { ok: true } | { ok: false; category: 'offline' | 'timeout' | 'failed' | 'terminal' };
 
 export type LocalOutboxTransport = {
   send(item: OutboxEntry): Promise<LocalOutboxTransportResult>;
@@ -15,6 +15,7 @@ export type LocalOutboxWorker = {
 
 export type LocalOutboxWorkerOptions = {
   onMessageAcked?: (clientMessageId: string) => void;
+  onMessageUpdated?: (clientMessageId: string) => void;
   now?: () => Date;
   online?: boolean;
   retryJitter?: () => number;
@@ -46,6 +47,7 @@ export function createLocalOutboxWorker(
   const clearTimer = options.clearTimeout ?? ((handle) => clearTimeout(handle));
   const timeoutMs = options.timeoutMs ?? DEFAULT_SEND_TIMEOUT_MS;
   let online = options.online ?? true;
+  const onMessageUpdated = options.onMessageUpdated ?? onMessageAcked;
   let disposed = false;
   let running = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -101,9 +103,18 @@ export function createLocalOutboxWorker(
         if (result.ok) {
           await repositories.ackOutboxMessageSent(item.clientMessageId, isoNow());
           try {
-            onMessageAcked?.(item.clientMessageId);
+            onMessageUpdated?.(item.clientMessageId);
           } catch {
             // UI refresh is best-effort; the SQLite ack above remains authoritative.
+          }
+          continue;
+        }
+        if (result.category === 'terminal') {
+          await repositories.markOutboxMessageNotSent(item.clientMessageId, isoNow());
+          try {
+            onMessageUpdated?.(item.clientMessageId);
+          } catch {
+            // UI refresh is best-effort; the SQLite transition above remains authoritative.
           }
           continue;
         }

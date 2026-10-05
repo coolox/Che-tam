@@ -65,6 +65,24 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       row.updated_at = params[0];
       return { changes: 1 };
     }
+    if (updated === 'messages' && normalized.includes("delivery_state = 'not_sent'")) {
+      const row = this.rows('messages').find((candidate) => candidate.client_message_id === params[1] && candidate.delivery_state === 'queued');
+      if (!row) return { changes: 0 };
+      row.delivery_state = 'not_sent';
+      row.updated_at = params[0];
+      return { changes: 1 };
+    }
+    if (updated === 'messages' && normalized.includes("delivery_state = 'queued'")) {
+      const row = this.rows('messages').find((candidate) => (
+        candidate.client_message_id === params[1]
+        && candidate.delivery_state === 'not_sent'
+        && (!normalized.includes('sender_id = ?') || candidate.sender_id === params[2])
+      ));
+      if (!row) return { changes: 0 };
+      row.delivery_state = 'queued';
+      row.updated_at = params[0];
+      return { changes: 1 };
+    }
     const deleted = /delete from ([a-z_]+)/.exec(normalized)?.[1];
     if (deleted === 'outbox' && normalized.includes('where client_message_id = ?')) {
       const rows = this.rows('outbox');
@@ -83,6 +101,9 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     if (normalized.includes('where version = ?')) result = result.filter((row) => row.version === params[0]);
     if (normalized.includes('where scope = ?')) result = result.filter((row) => row.scope === params[0]);
     if (normalized.includes('where chat_id = ?')) result = result.filter((row) => row.chat_id === params[0]);
+    if (normalized.includes('where client_message_id = ?')) result = result.filter((row) => row.client_message_id === params[0]);
+    if (normalized.includes('sender_id = ?')) result = result.filter((row) => row.sender_id === params[1]);
+    if (normalized.includes("delivery_state = 'not_sent'")) result = result.filter((row) => row.delivery_state === 'not_sent');
     if (normalized.includes('order by last_message_at')) result.sort((a, b) => (a.last_message_at === null ? 1 : b.last_message_at === null ? -1 : String(b.last_message_at).localeCompare(String(a.last_message_at))) || String(a.id).localeCompare(String(b.id)));
     if (normalized.includes('order by created_at asc, id asc')) result.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
     if (normalized.includes('order by created_at asc, client_message_id asc')) result.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.client_message_id).localeCompare(String(b.client_message_id)));
@@ -102,6 +123,17 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     const existing = key === null ? undefined : rows.find((candidate) => candidate[key] === row[key]);
     if (existing) {
       if (sql.includes('do nothing') || sql.includes('or ignore')) return { changes: 0 };
+      if (table === 'outbox' && sql.includes('on conflict(client_message_id) do update')) {
+        Object.assign(existing, {
+          chat_id: row.chat_id,
+          payload: row.payload,
+          state: row.state,
+          attempt_count: row.attempt_count,
+          next_attempt_at: row.next_attempt_at,
+          updated_at: row.updated_at,
+        });
+        return { changes: 1 };
+      }
       if (table === 'messages' && sql.includes('on conflict(client_message_id)')) {
         const mutableColumns = { ...row };
         delete mutableColumns.id;

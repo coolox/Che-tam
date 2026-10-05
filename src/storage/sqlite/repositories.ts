@@ -186,6 +186,47 @@ export class SqliteRepositories {
     });
   }
 
+  async markOutboxMessageNotSent(clientMessageId: string, updatedAt: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await transaction.execute(
+        `UPDATE messages SET delivery_state = 'not_sent', updated_at = ?
+        WHERE client_message_id = ? AND delivery_state = 'queued'`,
+        [updatedAt, clientMessageId],
+      );
+      await transaction.execute('DELETE FROM outbox WHERE client_message_id = ?', [clientMessageId]);
+    });
+  }
+
+  async retryNotSentTextMessage(clientMessageId: string, localSenderId: string, updatedAt: string): Promise<boolean> {
+    return this.database.transaction(async (transaction) => {
+      const rows = await transaction.query<Row>(
+        `SELECT * FROM messages
+        WHERE client_message_id = ? AND sender_id = ? AND delivery_state = 'not_sent'
+        LIMIT 1`,
+        [clientMessageId, localSenderId],
+      );
+      if (!rows[0]) return false;
+      const message = mapMessage(rows[0]);
+      const result = await transaction.execute(
+        `UPDATE messages SET delivery_state = 'queued', updated_at = ?
+        WHERE client_message_id = ? AND sender_id = ? AND delivery_state = 'not_sent'`,
+        [updatedAt, clientMessageId, localSenderId],
+      );
+      if (result.changes === 0) return false;
+      await this.upsertOutboxForRetryWith(transaction, {
+        clientMessageId,
+        chatId: message.chatId,
+        payload: JSON.stringify({ kind: 'text', clientMessageId, chatId: message.chatId, body: message.body, createdAt: message.createdAt }),
+        state: 'queued',
+        attemptCount: 0,
+        nextAttemptAt: null,
+        createdAt: message.createdAt,
+        updatedAt,
+      });
+      return true;
+    });
+  }
+
   private async upsertMessageWith(executor: SqlExecutor, message: StoredMessage): Promise<void> {
     await executor.execute(`INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(client_message_id) DO UPDATE SET chat_id = excluded.chat_id, sender_id = excluded.sender_id, body = excluded.body, created_at = excluded.created_at, delivery_state = excluded.delivery_state, updated_at = excluded.updated_at`, [message.id, message.chatId, message.clientMessageId, message.senderId, message.body, message.createdAt, message.deliveryState, message.updatedAt]);
@@ -194,6 +235,11 @@ export class SqliteRepositories {
   private async enqueueWith(executor: SqlExecutor, outbox: OutboxEntry): Promise<void> {
     await executor.execute(`INSERT INTO outbox(client_message_id, chat_id, payload, state, attempt_count, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(client_message_id) DO NOTHING`, [outbox.clientMessageId, outbox.chatId, outbox.payload, outbox.state, outbox.attemptCount, outbox.nextAttemptAt, outbox.createdAt, outbox.updatedAt]);
+  }
+
+  private async upsertOutboxForRetryWith(executor: SqlExecutor, outbox: OutboxEntry): Promise<void> {
+    await executor.execute(`INSERT INTO outbox(client_message_id, chat_id, payload, state, attempt_count, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(client_message_id) DO UPDATE SET chat_id = excluded.chat_id, payload = excluded.payload, state = excluded.state, attempt_count = excluded.attempt_count, next_attempt_at = excluded.next_attempt_at, updated_at = excluded.updated_at`, [outbox.clientMessageId, outbox.chatId, outbox.payload, outbox.state, outbox.attemptCount, outbox.nextAttemptAt, outbox.createdAt, outbox.updatedAt]);
   }
 }
 

@@ -21,6 +21,7 @@ export type LocalMessageStore = {
   clearUnread(chatId: string): Promise<void>;
   dispose(): void;
   getSnapshot(): LocalDataSnapshot;
+  retryTextMessage(clientMessageId: string): Promise<{ retried: boolean }>;
   sendTextMessage(chatId: string, draft: string): Promise<{ sent: boolean; clientMessageId: string | null }>;
   subscribe(listener: () => void): () => void;
 };
@@ -67,14 +68,19 @@ function avatarColor(id: string): string {
 }
 
 function messageToViewModel(message: StoredMessage): Message {
+  const localDeliveryState = message.deliveryState === 'queued' || message.deliveryState === 'sent' || message.deliveryState === 'not_sent'
+    ? message.deliveryState
+    : undefined;
   return {
     id: message.id,
     chatId: message.chatId,
+    clientMessageId: message.clientMessageId,
     sender: message.senderId === LOCAL_PROFILE_ID ? 'me' : 'relative',
     text: message.body,
     createdAt: message.createdAt,
-    delivered: message.deliveryState !== 'queued',
+    delivered: message.deliveryState === 'delivered' || message.deliveryState === 'read',
     read: message.deliveryState === 'read',
+    deliveryState: localDeliveryState,
     kind: 'text',
   };
 }
@@ -186,7 +192,7 @@ export function createLocalMessageStore(
         if (developmentSeedEnabled) await seedDevelopmentFixture(repositories);
         outboxWorker?.dispose();
         unsubscribeNetworkAvailability?.();
-        outboxWorker = createLocalOutboxWorker(repositories, transport, { now, onMessageAcked: refreshAfterOutboxAck, online: networkAvailable });
+        outboxWorker = createLocalOutboxWorker(repositories, transport, { now, onMessageUpdated: refreshAfterOutboxAck, online: networkAvailable });
         unsubscribeNetworkAvailability = subscribeToNetworkAvailability(networkAvailabilitySource, event => {
           if (event.type === 'networkObserved') networkAvailable = event.available;
           else networkAvailable = event.type === 'networkRestored';
@@ -218,6 +224,21 @@ export function createLocalMessageStore(
       outboxWorker?.dispose();
       outboxWorker = null;
       listeners.clear();
+    },
+    async retryTextMessage(clientMessageId) {
+      if (!repositories) return { retried: false };
+      const updatedAt = now().toISOString();
+      try {
+        const retried = await repositories.retryNotSentTextMessage(clientMessageId, LOCAL_PROFILE_ID, updatedAt);
+        if (retried) {
+          await refresh();
+          void outboxWorker?.kick();
+        }
+        return { retried };
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        return { retried: false };
+      }
     },
     async sendTextMessage(chatId, draft) {
       if (!repositories) return { sent: false, clientMessageId: null };

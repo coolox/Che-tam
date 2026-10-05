@@ -3,6 +3,8 @@ import {
   Camera,
   Check,
   CheckCheck,
+  CircleAlert,
+  Clock3,
   EllipsisVertical,
   Mic,
   Paperclip,
@@ -42,6 +44,7 @@ type ConversationScreenProps = {
   onSendMessage: () => void;
   onStartCall: (mode: CallMode) => void;
   onRetryLocalData: () => void;
+  onRetryMessage: (clientMessageId: string) => void;
 };
 
 export function ConversationScreen({
@@ -55,6 +58,7 @@ export function ConversationScreen({
   onSendMessage,
   onStartCall,
   onRetryLocalData,
+  onRetryMessage,
 }: ConversationScreenProps) {
   const { colors } = useTheme();
   const styles = useStyles();
@@ -116,7 +120,7 @@ export function ConversationScreen({
                   : <Text style={styles.dateDivider}>Сегодня</Text>
           }
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} />}
+          renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} onRetryMessage={onRetryMessage} />}
           style={styles.messageList}
         />
       </View>
@@ -179,7 +183,7 @@ function ComposerIconButton({ accessibilityLabel, icon }: { accessibilityLabel: 
   );
 }
 
-function MessageBubble({ message, messages }: { message: Message; messages: Message[] }) {
+function MessageBubble({ message, messages, onRetryMessage }: { message: Message; messages: Message[]; onRetryMessage: (clientMessageId: string) => void }) {
   const { colors } = useTheme();
   const styles = useStyles();
   const presentation = getMessagePresentation(messages, message);
@@ -204,10 +208,46 @@ function MessageBubble({ message, messages }: { message: Message; messages: Mess
       <Text style={styles.messageText}>{message.text}</Text>
       <View style={styles.messageMetaRow}>
         <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
+        <LocalDeliveryControl message={message} state={presentation.localDeliveryState} onRetryMessage={onRetryMessage} />
         <ReceiptIcon state={presentation.receipt} />
       </View>
     </View>
   );
+}
+
+function LocalDeliveryControl({
+  message,
+  onRetryMessage,
+  state,
+}: {
+  message: Message;
+  onRetryMessage: (clientMessageId: string) => void;
+  state: 'queued' | 'sent' | 'not_sent' | null;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  if (state === 'queued') {
+    return <Clock3 accessibilityLabel="В очереди" color={colors.textMuted} size={14} strokeWidth={2.4} />;
+  }
+  if (state === 'sent') {
+    return <Check accessibilityLabel="Отправлено" color={colors.textMuted} size={15} strokeWidth={2.5} />;
+  }
+  if (state === 'not_sent' && message.clientMessageId && message.kind === 'text') {
+    return (
+      <View style={styles.notSentControl}>
+        <CircleAlert accessibilityLabel="Не отправлено" color={colors.danger} size={15} strokeWidth={2.5} />
+        <Pressable
+          accessibilityLabel="Повторить отправку"
+          accessibilityRole="button"
+          onPress={() => onRetryMessage(message.clientMessageId as string)}
+          style={styles.retryMessageButton}
+        >
+          <Text style={styles.retryMessageText}>Повторить</Text>
+        </Pressable>
+      </View>
+    );
+  }
+  return null;
 }
 
 function ReceiptIcon({ state }: { state: 'none' | 'sent' | 'delivered' | 'read' }) {
@@ -327,6 +367,9 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   messageText: { color: colors.text, fontSize: typography.md, lineHeight: 22 },
   messageMetaRow: { alignItems: 'center', alignSelf: 'flex-end', flexDirection: 'row', gap: 2, marginTop: 3 },
   messageMeta: { color: colors.textMuted, fontSize: typography.xs },
+  notSentControl: { alignItems: 'center', flexDirection: 'row', gap: 4 },
+  retryMessageButton: { justifyContent: 'center', minHeight: 24 },
+  retryMessageText: { color: colors.danger, fontSize: typography.xs, fontWeight: '800' },
   callEventBubble: {
     alignItems: 'center',
     alignSelf: 'center',

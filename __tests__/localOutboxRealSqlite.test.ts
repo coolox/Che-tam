@@ -178,7 +178,7 @@ describe('local outbox on real SQLite', () => {
       context.availability.emit(true);
       await eventually(async () => expect(context.sentClientIds).toEqual(['cm-send']));
       await eventually(() => expect(context.store.getSnapshot().messagesByChat['chat-1']).toMatchObject([
-        { id: 'cm-send', text: 'Привет', delivered: true },
+        { id: 'cm-send', text: 'Привет', deliveryState: 'sent', delivered: false },
       ]));
       const { database, repositories } = await context.inspect();
       expect(await repositories.readOutbox()).toEqual([]);
@@ -270,6 +270,162 @@ describe('local outbox on real SQLite', () => {
       const outbox = await inspected.repositories.readOutbox();
       expect(messages.map(message => message.clientMessageId)).toEqual(['cm-once']);
       expect(outbox.map(item => item.clientMessageId)).toEqual(['cm-once']);
+      inspected.database.close();
+    } finally {
+      context.cleanup();
+    }
+  });
+
+  it('marks a deterministic terminal fake failure as not_sent and stops automatic retry', async () => {
+    const sentClientIds: string[] = [];
+    const context = await createSeededStore({
+      ids: ['cm-terminal'],
+      initialNetworkAvailable: true,
+      transport: {
+        send: async (item) => {
+          sentClientIds.push(item.clientMessageId);
+          return { ok: false, category: 'terminal' };
+        },
+      },
+    });
+    try {
+      await context.store.sendTextMessage('chat-1', 'Не уходит');
+
+      await eventually(() => expect(context.store.getSnapshot().messagesByChat['chat-1']).toMatchObject([
+        { id: 'cm-terminal', clientMessageId: 'cm-terminal', text: 'Не уходит', deliveryState: 'not_sent', delivered: false, read: false },
+      ]));
+      let inspected = await context.inspect();
+      expect(await inspected.repositories.readOutbox()).toEqual([]);
+      expect((await inspected.repositories.listMessages('chat-1'))[0]).toMatchObject({ clientMessageId: 'cm-terminal', deliveryState: 'not_sent' });
+      inspected.database.close();
+
+      context.availability.emit(true);
+      await context.store.retryTextMessage('missing-id');
+      inspected = await context.inspect();
+      expect(await inspected.repositories.readOutbox()).toEqual([]);
+      inspected.database.close();
+      expect(sentClientIds).toEqual(['cm-terminal']);
+    } finally {
+      context.cleanup();
+    }
+  });
+
+  it('retries a not_sent message with the same client id, one message, one outbox item, then marks sent', async () => {
+    const releaseAck: { current: (() => void) | null } = { current: null };
+    const sentClientIds: string[] = [];
+    const context = await createSeededStore({
+      ids: ['cm-retry'],
+      initialNetworkAvailable: true,
+      transport: {
+        send: async (item) => {
+          sentClientIds.push(item.clientMessageId);
+          if (sentClientIds.length === 1) return { ok: false, category: 'terminal' };
+          await new Promise<void>(resolve => { releaseAck.current = resolve; });
+          return { ok: true };
+        },
+      },
+    });
+    try {
+      await context.store.sendTextMessage('chat-1', 'Повтори');
+      await eventually(() => expect(context.store.getSnapshot().messagesByChat['chat-1'][0]).toMatchObject({ deliveryState: 'not_sent' }));
+
+      await context.store.retryTextMessage('cm-retry');
+      await eventually(() => expect(sentClientIds).toEqual(['cm-retry', 'cm-retry']));
+      let inspected = await context.inspect();
+      expect((await inspected.repositories.listMessages('chat-1')).map(message => ({
+        id: message.id,
+        clientMessageId: message.clientMessageId,
+        body: message.body,
+        createdAt: message.createdAt,
+      }))).toEqual([{ id: 'cm-retry', clientMessageId: 'cm-retry', body: 'Повтори', createdAt: '2026-10-05T10:00:00.000Z' }]);
+      expect((await inspected.repositories.readOutbox()).map(item => ({ clientMessageId: item.clientMessageId, state: item.state, attemptCount: item.attemptCount }))).toEqual([
+        { clientMessageId: 'cm-retry', state: 'queued', attemptCount: 0 },
+      ]);
+      inspected.database.close();
+
+      releaseAck.current?.();
+      await eventually(() => expect(context.store.getSnapshot().messagesByChat['chat-1'][0]).toMatchObject({ deliveryState: 'sent' }));
+      inspected = await context.inspect();
+      expect((await inspected.repositories.listMessages('chat-1'))[0]).toMatchObject({ clientMessageId: 'cm-retry', deliveryState: 'sent' });
+      expect(await inspected.repositories.readOutbox()).toEqual([]);
+      inspected.database.close();
+    } finally {
+      context.cleanup();
+    }
+  });
+
+  it('persists not_sent across restart and retries without duplicate messages or outbox rows', async () => {
+    const releaseAck: { current: (() => void) | null } = { current: null };
+    const sentClientIds: string[] = [];
+    const transport: LocalOutboxTransport = {
+      send: async (item) => {
+        sentClientIds.push(item.clientMessageId);
+        if (sentClientIds.length === 1) return { ok: false, category: 'terminal' };
+        await new Promise<void>(resolve => { releaseAck.current = resolve; });
+        return { ok: true };
+      },
+    };
+    const context = await createSeededStore({ ids: ['cm-restart-not-sent'], initialNetworkAvailable: true, transport });
+    try {
+      await context.store.sendTextMessage('chat-1', 'После ошибки');
+      await eventually(() => expect(context.store.getSnapshot().messagesByChat['chat-1'][0]).toMatchObject({ deliveryState: 'not_sent' }));
+      context.store.dispose();
+
+      const restarted = createLocalMessageStore(async () => context.open(), 'local.db', {
+        developmentSeedEnabled: false,
+        idFactory: () => 'unused',
+        initialNetworkAvailable: true,
+        networkAvailabilitySource: context.availability.source,
+        now: createClock(),
+        transport,
+      });
+      await restarted.bootstrap();
+      expect(restarted.getSnapshot().messagesByChat['chat-1']).toMatchObject([
+        { id: 'cm-restart-not-sent', clientMessageId: 'cm-restart-not-sent', deliveryState: 'not_sent', text: 'После ошибки' },
+      ]);
+
+      await restarted.retryTextMessage('cm-restart-not-sent');
+      await eventually(() => expect(sentClientIds).toEqual(['cm-restart-not-sent', 'cm-restart-not-sent']));
+      const inspected = await context.inspect();
+      expect((await inspected.repositories.listMessages('chat-1')).map(message => message.clientMessageId)).toEqual(['cm-restart-not-sent']);
+      expect((await inspected.repositories.readOutbox()).map(item => item.clientMessageId)).toEqual(['cm-restart-not-sent']);
+      inspected.database.close();
+
+      releaseAck.current?.();
+      await eventually(() => expect(restarted.getSnapshot().messagesByChat['chat-1'][0]).toMatchObject({ deliveryState: 'sent' }));
+      restarted.dispose();
+    } finally {
+      context.cleanup();
+    }
+  });
+
+  it('does not retry a not_sent message owned by another sender', async () => {
+    const context = await createSeededStore({ ids: [], initialNetworkAvailable: false });
+    try {
+      const inspected = await context.inspect();
+      await inspected.repositories.upsertProfile({ id: 'relative-sender', displayName: 'Семья', avatarUrl: null, updatedAt: '2026-10-05T10:00:00.000Z' });
+      await inspected.repositories.upsertMessage({
+        id: 'm-relative-not-sent',
+        chatId: 'chat-1',
+        clientMessageId: 'cm-relative-not-sent',
+        senderId: 'relative-sender',
+        body: 'Не наше исходящее',
+        createdAt: '2026-10-05T10:01:00.000Z',
+        deliveryState: 'not_sent',
+        updatedAt: '2026-10-05T10:01:00.000Z',
+      });
+
+      await expect(inspected.repositories.retryNotSentTextMessage(
+        'cm-relative-not-sent',
+        'local-self',
+        '2026-10-05T10:02:00.000Z',
+      )).resolves.toBe(false);
+      expect((await inspected.repositories.listMessages('chat-1'))[0]).toMatchObject({
+        clientMessageId: 'cm-relative-not-sent',
+        deliveryState: 'not_sent',
+        senderId: 'relative-sender',
+      });
+      expect(await inspected.repositories.readOutbox()).toEqual([]);
       inspected.database.close();
     } finally {
       context.cleanup();

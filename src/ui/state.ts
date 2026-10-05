@@ -3,11 +3,13 @@ import { CallLogCallbackType, CallLogEntry, Chat, Message, TabKey } from './type
 const normalize = (value: string) => value.trim().toLocaleLowerCase('ru-RU');
 
 export type ComposerAction = 'mic' | 'send';
+export type LocalDeliveryState = 'queued' | 'sent' | 'not_sent';
 export type ReceiptState = 'none' | 'sent' | 'delivered' | 'read';
 export type MessagePresentation = {
   incomingTail: boolean;
   isCallEvent: boolean;
   isMissedCall: boolean;
+  localDeliveryState: LocalDeliveryState | null;
   receipt: ReceiptState;
 };
 export type CallLogDisplayModel =
@@ -118,12 +120,17 @@ export function getMessagePresentation(messages: Message[], message: Message): M
   const index = messages.findIndex(item => item.id === message.id);
   const previous = index > 0 ? messages[index - 1] : undefined;
   const isCallEvent = message.kind === 'call';
+  const localDeliveryState = message.sender === 'me' && message.kind !== 'call' && message.deliveryState ? message.deliveryState : null;
   const receipt: ReceiptState =
-    message.sender !== 'me' || isCallEvent ? 'none' : message.read ? 'read' : message.delivered ? 'delivered' : 'sent';
+    message.sender !== 'me' || isCallEvent ? 'none'
+      : localDeliveryState === 'sent' ? 'sent'
+        : localDeliveryState ? 'none'
+          : message.read ? 'read' : message.delivered ? 'delivered' : 'sent';
   return {
     incomingTail: message.sender === 'relative' && previous?.sender !== 'relative',
     isCallEvent,
     isMissedCall: isCallEvent && message.callStatus === 'missed',
+    localDeliveryState,
     receipt,
   };
 }
