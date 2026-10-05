@@ -102,11 +102,18 @@ const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
 type PreviewAppShellProps = {
   isLocalTestModeEnabled?: boolean;
   snapshot: LocalDataSnapshot;
+  onClearComposerDraft: (chatId: string) => Promise<void>;
   onClearUnread: (chatId: string) => Promise<void>;
+  onReadComposerDraft: (chatId: string) => Promise<string | null>;
   onRetry: () => Promise<void>;
   onRetryMessage: (clientMessageId: string) => Promise<{ retried: boolean }>;
+  onSaveComposerDraft: (chatId: string, draft: string) => Promise<void>;
   onSendMessage: (chatId: string, draft: string) => Promise<{ sent: boolean; clientMessageId: string | null }>;
 };
+
+export function isFreshComposerDraftLoad(requestId: number, latestRequestId: number, requestedChatId: string, currentChatId: string): boolean {
+  return requestId === latestRequestId && requestedChatId === currentChatId;
+}
 
 export function resolveFamilyCallChatId(chats: Chat[], memberName: string): string | null {
   return chats.find(chat => chat.name === memberName)?.id ?? null;
@@ -151,7 +158,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, onRetry, onRetryMessage, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -168,6 +175,8 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([]);
   const [callFallbackText, setCallFallbackText] = useState<string | null>(null);
+  const selectedChatIdRef = useRef(selectedChatId);
+  const draftLoadRequestRef = useRef(0);
 
   const { mode } = useTheme();
   const styles = useStyles();
@@ -177,6 +186,10 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
   const selectedChat = chats.find(chat => chat.id === selectedChatId) ?? chats[0];
   const selectedMessages = selectedChat ? messagesByChat[selectedChat.id] ?? [] : [];
   const callLog = INITIAL_CALL_LOG;
+
+  useEffect(() => {
+    selectedChatIdRef.current = selectedChatId;
+  }, [selectedChatId]);
 
   const goBack = () => {
     if (selectedChatIds.length > 0) {
@@ -214,10 +227,24 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
 
   useEffect(() => {
     if (selectedChatId && !chats.some(chat => chat.id === selectedChatId)) {
-      setSelectedChatId(chats[0]?.id ?? '');
+      const nextChatId = chats[0]?.id ?? '';
+      selectedChatIdRef.current = nextChatId;
+      setSelectedChatId(nextChatId);
       if (screen === 'conversation' || screen === 'call') setScreen('home');
     }
   }, [chats, screen, selectedChatId]);
+
+  useEffect(() => {
+    if (screen !== 'conversation' || !selectedChatId) return;
+    const requestId = draftLoadRequestRef.current + 1;
+    draftLoadRequestRef.current = requestId;
+    setComposer('');
+    void onReadComposerDraft(selectedChatId).then((draft) => {
+      if (isFreshComposerDraftLoad(requestId, draftLoadRequestRef.current, selectedChatId, selectedChatIdRef.current)) {
+        setComposer(draft ?? '');
+      }
+    });
+  }, [onReadComposerDraft, screen, selectedChatId]);
 
   const enterDemo = () => {
     setActiveTab('chats');
@@ -225,9 +252,10 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
   };
 
   const openChat = async (chatId: string) => {
-    await onClearUnread(chatId);
+    selectedChatIdRef.current = chatId;
     setSelectedChatId(chatId);
     setScreen('conversation');
+    await onClearUnread(chatId);
   };
 
   const startSelectingChat = (chatId: string) => {
@@ -297,8 +325,18 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
 
   const sendMessage = async () => {
     if (!selectedChat) return;
-    const result = await onSendMessage(selectedChat.id, composer);
-    if (result.sent) setComposer('');
+    const chatId = selectedChat.id;
+    const draft = composer;
+    const result = await onSendMessage(chatId, draft);
+    if (result.sent) {
+      await onClearComposerDraft(chatId);
+      if (selectedChatIdRef.current === chatId) setComposer('');
+    }
+  };
+
+  const updateComposer = (draft: string) => {
+    setComposer(draft);
+    if (selectedChat) void onSaveComposerDraft(selectedChat.id, draft);
   };
 
   const startCallFromLog = (entry: CallLogEntry) => {
@@ -308,6 +346,7 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
       return;
     }
     setCallFallbackText(null);
+    selectedChatIdRef.current = action.chatId;
     setSelectedChatId(action.chatId);
     startCall(action.mode);
   };
@@ -319,6 +358,7 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
       return;
     }
     setCallFallbackText(null);
+    selectedChatIdRef.current = action.chatId;
     setSelectedChatId(action.chatId);
     startCall(action.mode);
   };
@@ -371,7 +411,7 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, on
           dataStatus={snapshot.status}
           messages={selectedMessages}
           onBack={() => setScreen('home')}
-          onComposer={setComposer}
+          onComposer={updateComposer}
           onRetryMessage={(clientMessageId) => void onRetryMessage(clientMessageId)}
           onSendMessage={sendMessage}
           onStartCall={startCall}

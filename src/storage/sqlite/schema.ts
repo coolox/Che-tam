@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export const CREATE_SCHEMA_MIGRATIONS = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -61,6 +61,14 @@ export const SCHEMA_V1_STATEMENTS = [
     attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
     next_attempt_at TEXT NULL,
     created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`,
+] as const;
+
+export const SCHEMA_V2_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS chat_drafts (
+    chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+    text TEXT NOT NULL,
     updated_at TEXT NOT NULL
   )`,
 ] as const;

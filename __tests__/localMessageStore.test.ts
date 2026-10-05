@@ -44,6 +44,40 @@ describe('local message store', () => {
     expect(store.getSnapshot().chats.find((chat) => chat.id === 'parents')?.unread).toBe(0);
   });
 
+  it('saves separate composer drafts and clears blank drafts', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: true });
+    await store.bootstrap();
+
+    await store.saveComposerDraft('parents', '  Черновик для родителей  ');
+    await store.saveComposerDraft('sister', 'Черновик для сестры');
+    await store.saveComposerDraft('parents', '   ');
+
+    expect(await store.readComposerDraft('parents')).toBeNull();
+    expect(await store.readComposerDraft('sister')).toBe('Черновик для сестры');
+  });
+
+  it('retains drafts for empty or failed sends and clears only after a successful send', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+      developmentSeedEnabled: true,
+      idFactory: () => 'draft-send-client-message',
+      now: () => new Date('2026-10-03T12:00:00.000Z'),
+    });
+    await store.bootstrap();
+    await store.saveComposerDraft('parents', 'Останется');
+
+    expect(await store.sendTextMessage('parents', '   ')).toEqual({ sent: false, clientMessageId: null });
+    expect(await store.readComposerDraft('parents')).toBe('Останется');
+
+    database.failNext('insert into messages');
+    expect(await store.sendTextMessage('parents', 'Останется')).toEqual({ sent: false, clientMessageId: null });
+    expect(await store.readComposerDraft('parents')).toBe('Останется');
+
+    expect(await store.sendTextMessage('parents', 'Останется')).toEqual({ sent: true, clientMessageId: 'draft-send-client-message' });
+    expect(await store.readComposerDraft('parents')).toBeNull();
+  });
+
   it('has deterministic Russian loading, empty, and recoverable error strings', async () => {
     expect(LOCAL_LOADING_TEXT).toBe('Загружаем локальные сообщения…');
     expect(EMPTY_CHATS_TEXT).toBe('Здесь появятся ваши чаты');

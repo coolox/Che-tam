@@ -53,6 +53,12 @@ export type OutboxEntry = {
   updatedAt: string;
 };
 
+export type StoredChatDraft = {
+  chatId: string;
+  text: string;
+  updatedAt: string;
+};
+
 type Row = Record<string, SqlValue>;
 
 function mapChat(row: Row): StoredChat {
@@ -63,6 +69,9 @@ function mapMessage(row: Row): StoredMessage {
 }
 function mapOutbox(row: Row): OutboxEntry {
   return { clientMessageId: row.client_message_id as string, chatId: row.chat_id as string, payload: row.payload as string, state: row.state as string, attemptCount: row.attempt_count as number, nextAttemptAt: row.next_attempt_at as string | null, createdAt: row.created_at as string, updatedAt: row.updated_at as string };
+}
+function mapChatDraft(row: Row): StoredChatDraft {
+  return { chatId: row.chat_id as string, text: row.text as string, updatedAt: row.updated_at as string };
 }
 
 export class SqliteRepositories {
@@ -118,6 +127,18 @@ export class SqliteRepositories {
     });
   }
 
+  async saveMessageEnqueueAndClearDraft(message: StoredMessage, outbox: OutboxEntry): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      await this.upsertMessageWith(transaction, message);
+      await this.enqueueWith(transaction, outbox);
+      await transaction.execute(
+        'UPDATE chats SET last_message_at = ?, updated_at = ? WHERE id = ?',
+        [message.createdAt, message.updatedAt, message.chatId],
+      );
+      await this.clearChatDraftWith(transaction, message.chatId);
+    });
+  }
+
   async listChats(): Promise<StoredChat[]> {
     return (await this.database.query<Row>('SELECT * FROM chats ORDER BY last_message_at IS NULL ASC, last_message_at DESC, id ASC')).map(mapChat);
   }
@@ -128,6 +149,20 @@ export class SqliteRepositories {
 
   async listMessages(chatId: string): Promise<StoredMessage[]> {
     return (await this.database.query<Row>('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC', [chatId])).map(mapMessage);
+  }
+
+  async readChatDraft(chatId: string): Promise<StoredChatDraft | null> {
+    const rows = await this.database.query<Row>('SELECT * FROM chat_drafts WHERE chat_id = ?', [chatId]);
+    return rows[0] ? mapChatDraft(rows[0]) : null;
+  }
+
+  async saveChatDraft(draft: StoredChatDraft): Promise<void> {
+    await this.database.execute(`INSERT INTO chat_drafts(chat_id, text, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(chat_id) DO UPDATE SET text = excluded.text, updated_at = excluded.updated_at`, [draft.chatId, draft.text, draft.updatedAt]);
+  }
+
+  async clearChatDraft(chatId: string): Promise<void> {
+    await this.clearChatDraftWith(this.database, chatId);
   }
 
   async readOutbox(): Promise<OutboxEntry[]> {
@@ -235,6 +270,10 @@ export class SqliteRepositories {
   private async enqueueWith(executor: SqlExecutor, outbox: OutboxEntry): Promise<void> {
     await executor.execute(`INSERT INTO outbox(client_message_id, chat_id, payload, state, attempt_count, next_attempt_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(client_message_id) DO NOTHING`, [outbox.clientMessageId, outbox.chatId, outbox.payload, outbox.state, outbox.attemptCount, outbox.nextAttemptAt, outbox.createdAt, outbox.updatedAt]);
+  }
+
+  private async clearChatDraftWith(executor: SqlExecutor, chatId: string): Promise<void> {
+    await executor.execute('DELETE FROM chat_drafts WHERE chat_id = ?', [chatId]);
   }
 
   private async upsertOutboxForRetryWith(executor: SqlExecutor, outbox: OutboxEntry): Promise<void> {

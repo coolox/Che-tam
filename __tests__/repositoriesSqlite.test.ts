@@ -57,6 +57,34 @@ describe('SQLite repositories', () => {
     }]);
   });
 
+  it('saves, separates, and clears chat drafts by chat id', async () => {
+    const { repositories } = await setup();
+    await repositories.upsertChat({ id: 'c2', title: 'Second', kind: 'direct', lastMessageAt: null, unreadCount: 0, updatedAt: now });
+
+    await repositories.saveChatDraft({ chatId: 'c1', text: 'draft one', updatedAt: now });
+    await repositories.saveChatDraft({ chatId: 'c2', text: 'draft two', updatedAt: '2026-10-03T12:01:00.000Z' });
+    await repositories.clearChatDraft('c1');
+
+    expect(await repositories.readChatDraft('c1')).toBeNull();
+    expect(await repositories.readChatDraft('c2')).toEqual({
+      chatId: 'c2',
+      text: 'draft two',
+      updatedAt: '2026-10-03T12:01:00.000Z',
+    });
+  });
+
+  it('clears only the sent chat draft inside the successful enqueue transaction', async () => {
+    const { repositories } = await setup();
+    await repositories.upsertChat({ id: 'c2', title: 'Second', kind: 'direct', lastMessageAt: null, unreadCount: 0, updatedAt: now });
+    await repositories.saveChatDraft({ chatId: 'c1', text: 'send me', updatedAt: now });
+    await repositories.saveChatDraft({ chatId: 'c2', text: 'keep me', updatedAt: now });
+
+    await repositories.saveMessageEnqueueAndClearDraft(message, outbox);
+
+    expect(await repositories.readChatDraft('c1')).toBeNull();
+    expect(await repositories.readChatDraft('c2')).toMatchObject({ text: 'keep me' });
+  });
+
   it('rolls back both message and outbox changes when deterministic enqueue failure is injected', async () => {
     const { database, repositories } = await setup();
     database.failNext('insert into outbox');

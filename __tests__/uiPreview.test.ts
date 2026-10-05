@@ -16,6 +16,7 @@ import {
   CALL_UNAVAILABLE_TEXT,
   getHeaderToFirstContentRowGap,
   getSettingsAvatarModel,
+  isFreshComposerDraftLoad,
   resolveCallLogAction,
   resolveFamilyCallAction,
 } from '../src/app/PreviewAppShell';
@@ -150,6 +151,13 @@ describe('UI Preview local behavior', () => {
   it('derives composer action and camera visibility from trimmed text', () => {
     expect(getComposerState('   ')).toEqual({ action: 'mic', showCamera: true, trimmedText: '' });
     expect(getComposerState('  Привет  ')).toEqual({ action: 'send', showCamera: false, trimmedText: 'Привет' });
+  });
+
+  it('ignores stale composer draft loads when the selected chat changes quickly', () => {
+    expect(isFreshComposerDraftLoad(1, 2, 'parents', 'sister')).toBe(false);
+    expect(isFreshComposerDraftLoad(2, 2, 'sister', 'sister')).toBe(true);
+    expect(isFreshComposerDraftLoad(2, 3, 'sister', 'parents')).toBe(false);
+    expect(isFreshComposerDraftLoad(3, 3, 'parents', 'parents')).toBe(true);
   });
 
   it('derives receipt, incoming-tail and call-event presentation state', () => {

@@ -19,10 +19,13 @@ export type LocalDataSnapshot =
 
 export type LocalMessageStore = {
   bootstrap(): Promise<void>;
+  clearComposerDraft(chatId: string): Promise<void>;
   clearUnread(chatId: string): Promise<void>;
   dispose(): void;
   getSnapshot(): LocalDataSnapshot;
+  readComposerDraft(chatId: string): Promise<string | null>;
   retryTextMessage(clientMessageId: string): Promise<{ retried: boolean }>;
+  saveComposerDraft(chatId: string, draft: string): Promise<void>;
   sendTextMessage(chatId: string, draft: string): Promise<{ sent: boolean; clientMessageId: string | null }>;
   subscribe(listener: () => void): () => void;
 };
@@ -217,6 +220,14 @@ export function createLocalMessageStore(
         setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
       }
     },
+    async clearComposerDraft(chatId) {
+      if (!repositories) return;
+      try {
+        await repositories.clearChatDraft(chatId);
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+      }
+    },
     dispose() {
       unsubscribeNetworkAvailability?.();
       unsubscribeNetworkAvailability = null;
@@ -239,6 +250,27 @@ export function createLocalMessageStore(
         return { retried: false };
       }
     },
+    async readComposerDraft(chatId) {
+      if (!repositories) return null;
+      try {
+        return (await repositories.readChatDraft(chatId))?.text ?? null;
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        return null;
+      }
+    },
+    async saveComposerDraft(chatId, draft) {
+      if (!repositories) return;
+      try {
+        if (draft.trim().length === 0) {
+          await repositories.clearChatDraft(chatId);
+          return;
+        }
+        await repositories.saveChatDraft({ chatId, text: draft, updatedAt: now().toISOString() });
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+      }
+    },
     async sendTextMessage(chatId, draft) {
       if (!repositories) return { sent: false, clientMessageId: null };
       const body = draft.trim();
@@ -256,7 +288,7 @@ export function createLocalMessageStore(
         updatedAt: createdAt,
       };
       try {
-        await repositories.saveMessageAndEnqueue(message, {
+        await repositories.saveMessageEnqueueAndClearDraft(message, {
           clientMessageId,
           chatId,
           payload: JSON.stringify({ kind: 'text', clientMessageId, chatId, body, createdAt }),

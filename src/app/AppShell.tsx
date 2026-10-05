@@ -154,7 +154,7 @@ export function AppShell() {
   useEffect(() => { const unsubscribe = store.subscribe(() => setSnapshot(store.getSnapshot())); void store.bootstrap(); return unsubscribe; }, []);
   if (verified === null) return <Text>{LOCAL_LOADING_TEXT}</Text>;
   if (!verified) return <SafeAreaProvider><ThemeProvider><PhoneVerificationGate preference={preference} onComplete={() => setVerified(true)} /></ThemeProvider></SafeAreaProvider>;
-  return <PreviewAppShell isLocalTestModeEnabled={localTestMode.enabled} snapshot={snapshot} onClearUnread={(chatId) => store.clearUnread(chatId)} onRetry={() => store.bootstrap()} onRetryMessage={(clientMessageId) => store.retryTextMessage(clientMessageId)} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
+  return <PreviewAppShell isLocalTestModeEnabled={localTestMode.enabled} snapshot={snapshot} onClearComposerDraft={(chatId) => store.clearComposerDraft(chatId)} onClearUnread={(chatId) => store.clearUnread(chatId)} onReadComposerDraft={(chatId) => store.readComposerDraft(chatId)} onRetry={() => store.bootstrap()} onRetryMessage={(clientMessageId) => store.retryTextMessage(clientMessageId)} onSaveComposerDraft={(chatId, draft) => store.saveComposerDraft(chatId, draft)} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
 }
 
 const createPhoneStyles = (colors: ThemeColors, topInset: number) => StyleSheet.create({

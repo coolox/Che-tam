@@ -114,4 +114,33 @@ describe('real SQLite local bootstrap', () => {
       rmSync(directory, { force: true, recursive: true });
     }
   });
+
+  it('persists composer drafts across reopening the same local store database', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'che-tam-drafts-'));
+    const databasePath = join(directory, 'local.db');
+    const opened: RealSqliteDatabase[] = [];
+    const factory = async () => {
+      const database = new RealSqliteDatabase(databasePath);
+      opened.push(database);
+      return database;
+    };
+
+    try {
+      const firstStore = createLocalMessageStore(factory, 'che-tam-local.db', { developmentSeedEnabled: true });
+      await firstStore.bootstrap();
+      await firstStore.saveComposerDraft('parents', 'Реальный SQLite черновик');
+      firstStore.dispose();
+      opened.pop()?.close();
+
+      const secondStore = createLocalMessageStore(factory, 'che-tam-local.db', { developmentSeedEnabled: true });
+      await secondStore.bootstrap();
+
+      expect(await secondStore.readComposerDraft('parents')).toBe('Реальный SQLite черновик');
+      secondStore.dispose();
+      opened.pop()?.close();
+    } finally {
+      for (const database of opened) database.close();
+      rmSync(directory, { force: true, recursive: true });
+    }
+  });
 });

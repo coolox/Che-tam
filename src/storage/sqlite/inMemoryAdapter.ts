@@ -84,11 +84,12 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       return { changes: 1 };
     }
     const deleted = /delete from ([a-z_]+)/.exec(normalized)?.[1];
-    if (deleted === 'outbox' && normalized.includes('where client_message_id = ?')) {
-      const rows = this.rows('outbox');
+    if ((deleted === 'outbox' && normalized.includes('where client_message_id = ?')) || (deleted === 'chat_drafts' && normalized.includes('where chat_id = ?'))) {
+      const rows = this.rows(deleted);
       const previousLength = rows.length;
-      this.state.rows.set('outbox', rows.filter((row) => row.client_message_id !== params[0]));
-      return { changes: previousLength - this.rows('outbox').length };
+      const key = deleted === 'outbox' ? 'client_message_id' : 'chat_id';
+      this.state.rows.set(deleted, rows.filter((row) => row[key] !== params[0]));
+      return { changes: previousLength - this.rows(deleted).length };
     }
     throw new Error(`Unsupported fake SQL: ${sql}`);
   }
@@ -115,11 +116,11 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     const columns = /\(([^)]+)\) values/.exec(sql)?.[1]?.split(',').map((value) => value.trim());
     if (!columns) throw new Error(`Unsupported fake insert: ${sql}`);
     const row = Object.fromEntries(columns.map((column, index) => [column, params[index]])) as Row;
-    if (this.foreignKeysEnabled && table === 'messages' && !this.rows('chats').some((chat) => chat.id === row.chat_id)) {
+    if (this.foreignKeysEnabled && (table === 'messages' || table === 'chat_drafts') && !this.rows('chats').some((chat) => chat.id === row.chat_id)) {
       throw new Error('FOREIGN KEY constraint failed');
     }
     const rows = this.rows(table);
-    const key = table === 'schema_migrations' ? 'version' : table === 'profiles' || table === 'chats' || table === 'messages' ? (table === 'messages' ? 'client_message_id' : 'id') : table === 'sync_cursors' ? 'scope' : table === 'endpoint_cache' ? 'endpoint_id' : table === 'outbox' ? 'client_message_id' : null;
+    const key = table === 'schema_migrations' ? 'version' : table === 'profiles' || table === 'chats' || table === 'messages' ? (table === 'messages' ? 'client_message_id' : 'id') : table === 'sync_cursors' ? 'scope' : table === 'endpoint_cache' ? 'endpoint_id' : table === 'outbox' ? 'client_message_id' : table === 'chat_drafts' ? 'chat_id' : null;
     const existing = key === null ? undefined : rows.find((candidate) => candidate[key] === row[key]);
     if (existing) {
       if (sql.includes('do nothing') || sql.includes('or ignore')) return { changes: 0 };
