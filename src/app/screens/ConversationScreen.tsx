@@ -15,8 +15,20 @@ import {
   Video,
 } from 'lucide-react-native';
 import type { ReactNode } from 'react';
-import { useEffect, useMemo, useRef } from 'react';
-import { Animated, FlatList, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  Animated,
+  FlatList,
+  Keyboard,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,6 +44,50 @@ import { radius, spacing, typography, type ThemeColors } from '../../ui/tokens';
 import type { Chat, Message } from '../../ui/types';
 
 type CallMode = 'audio' | 'video';
+
+const LATEST_SCROLL_OFFSET_THRESHOLD = 48;
+
+export type ConversationScrollIntentState = {
+  isAtLatest: boolean;
+  latestMessageId: string | null;
+};
+
+export type ConversationScrollIntentEvent =
+  | { type: 'enter' }
+  | { type: 'keyboardOpened' }
+  | { type: 'messagesChanged'; latestMessageId: string | null; latestMessageSender: Message['sender'] | null }
+  | { type: 'scrolled'; offsetY: number };
+
+export function reduceConversationScrollIntent(
+  state: ConversationScrollIntentState,
+  event: ConversationScrollIntentEvent,
+): { state: ConversationScrollIntentState; scrollToLatest: boolean } {
+  if (event.type === 'enter') {
+    return { state, scrollToLatest: true };
+  }
+
+  if (event.type === 'keyboardOpened') {
+    return { state, scrollToLatest: state.isAtLatest };
+  }
+
+  if (event.type === 'scrolled') {
+    return {
+      state: { ...state, isAtLatest: event.offsetY <= LATEST_SCROLL_OFFSET_THRESHOLD },
+      scrollToLatest: false,
+    };
+  }
+
+  if (event.latestMessageId === state.latestMessageId) {
+    return { state, scrollToLatest: false };
+  }
+
+  const nextState = { ...state, latestMessageId: event.latestMessageId };
+  if (event.latestMessageSender === 'me') {
+    return { state: { ...nextState, isAtLatest: true }, scrollToLatest: true };
+  }
+
+  return { state: nextState, scrollToLatest: state.isAtLatest };
+}
 
 type ConversationScreenProps = {
   chat: Chat;
@@ -66,6 +122,28 @@ export function ConversationScreen({
   const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
   const composerState = getComposerState(composer);
   const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
+  const listRef = useRef<FlatList<Message>>(null);
+  const latestMessage = messages.at(-1) ?? null;
+  const scrollIntentState = useRef<ConversationScrollIntentState>({
+    isAtLatest: true,
+    latestMessageId: latestMessage?.id ?? null,
+  });
+
+  const requestScrollToLatest = useCallback((animated = true) => {
+    listRef.current?.scrollToOffset({ animated, offset: 0 });
+  }, []);
+
+  const applyScrollIntent = useCallback((event: ConversationScrollIntentEvent, animated = true) => {
+    const result = reduceConversationScrollIntent(scrollIntentState.current, event);
+    scrollIntentState.current = result.state;
+    if (result.scrollToLatest) {
+      requestScrollToLatest(animated);
+    }
+  }, [requestScrollToLatest]);
+
+  const handleMessageScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    applyScrollIntent({ type: 'scrolled', offsetY: event.nativeEvent.contentOffset.y });
+  }, [applyScrollIntent]);
 
   useEffect(() => {
     Animated.timing(actionTransition, {
@@ -75,8 +153,28 @@ export function ConversationScreen({
     }).start();
   }, [actionTransition, composerState.action]);
 
+  useEffect(() => {
+    applyScrollIntent({ type: 'enter' }, false);
+  }, [applyScrollIntent]);
+
+  useEffect(() => {
+    applyScrollIntent({
+      type: 'messagesChanged',
+      latestMessageId: latestMessage?.id ?? null,
+      latestMessageSender: latestMessage?.sender ?? null,
+    });
+  }, [applyScrollIntent, latestMessage?.id, latestMessage?.sender]);
+
+  useEffect(() => {
+    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+      applyScrollIntent({ type: 'keyboardOpened' });
+    });
+
+    return () => subscription.remove();
+  }, [applyScrollIntent]);
+
   return (
-    <KeyboardAvoidingView automaticOffset behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.appShell}>
+    <KeyboardAvoidingView automaticOffset behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.appShell}>
       <View style={styles.conversationHeader}>
         <HeaderIconButton accessibilityLabel="Назад" icon={<ArrowLeft color={colors.accent} size={24} />} onPress={onBack} />
         <View style={[styles.avatarSmall, { backgroundColor: chat.avatarColor }]}>
@@ -120,7 +218,10 @@ export function ConversationScreen({
                   : <Text style={styles.dateDivider}>Сегодня</Text>
           }
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onScroll={handleMessageScroll}
+          ref={listRef}
           renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} onRetryMessage={onRetryMessage} />}
+          scrollEventThrottle={32}
           style={styles.messageList}
         />
       </View>

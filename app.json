@@ -15,6 +15,7 @@
     "android": {
       "package": "net.hearth.chetam",
       "versionCode": 3,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/brand/che-tam-brand-mark.png",
         "backgroundColor": "#0F5C48",
