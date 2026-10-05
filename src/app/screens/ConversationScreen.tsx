@@ -38,7 +38,13 @@ import {
   LOCAL_LOADING_TEXT,
   type LocalDataSnapshot,
 } from '../../messages/localMessageStore';
-import { formatMessageTime, getComposerState, getMessagePresentation } from '../../ui/state';
+import {
+  formatMessageTime,
+  getComposerState,
+  getConversationDateItems,
+  getMessagePresentation,
+  type ConversationDateItem,
+} from '../../ui/state';
 import { useTheme } from '../../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../../ui/tokens';
 import type { Chat, Message } from '../../ui/types';
@@ -119,10 +125,11 @@ export function ConversationScreen({
   const { colors } = useTheme();
   const styles = useStyles();
   const connection = useConnectionStatus();
-  const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
+  const conversationItems = useMemo(() => getConversationDateItems(messages), [messages]);
+  const reversedConversationItems = useMemo(() => [...conversationItems].reverse(), [conversationItems]);
   const composerState = getComposerState(composer);
   const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
-  const listRef = useRef<FlatList<Message>>(null);
+  const listRef = useRef<FlatList<ConversationDateItem>>(null);
   const latestMessage = messages.at(-1) ?? null;
   const scrollIntentState = useRef<ConversationScrollIntentState>({
     isAtLatest: true,
@@ -207,20 +214,24 @@ export function ConversationScreen({
         </View>
         <FlatList
           contentContainerStyle={styles.messages}
-          data={reversedMessages}
+          data={reversedConversationItems}
           inverted
           keyboardShouldPersistTaps="handled"
-          keyExtractor={message => message.id}
+          keyExtractor={item => item.key}
           ListFooterComponent={
             dataStatus === 'loading' ? <Text style={styles.dateDivider}>{LOCAL_LOADING_TEXT}</Text>
               : dataStatus === 'error' ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{dataErrorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetryLocalData} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>
                 : messages.length === 0 ? <Text style={styles.dateDivider}>{EMPTY_CONVERSATION_TEXT}</Text>
-                  : <Text style={styles.dateDivider}>Сегодня</Text>
+                  : null
           }
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
           onScroll={handleMessageScroll}
           ref={listRef}
-          renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} onRetryMessage={onRetryMessage} />}
+          renderItem={({ item }) => (
+            item.itemType === 'dateDivider'
+              ? <Text accessibilityLabel={item.label} accessibilityRole="text" style={styles.dateDivider}>{item.label}</Text>
+              : <MessageBubble message={item.message} messages={messages} onRetryMessage={onRetryMessage} />
+          )}
           scrollEventThrottle={32}
           style={styles.messageList}
         />

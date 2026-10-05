@@ -12,6 +12,21 @@ export type MessagePresentation = {
   localDeliveryState: LocalDeliveryState | null;
   receipt: ReceiptState;
 };
+export type ConversationDateMessageItem = {
+  itemType: 'message';
+  key: string;
+  message: Message;
+};
+export type ConversationDateDividerItem = {
+  itemType: 'dateDivider';
+  key: string;
+  label: string;
+};
+export type ConversationDateItem = ConversationDateDividerItem | ConversationDateMessageItem;
+export type ConversationDateGroupingOptions = {
+  now?: Date;
+  timeZone?: string;
+};
 export type CallLogDisplayModel =
   | { empty: true; emptyText: 'Здесь появятся ваши звонки'; rows: [] }
   | { empty: false; emptyText: null; rows: CallLogEntry[] };
@@ -135,6 +150,35 @@ export function getMessagePresentation(messages: Message[], message: Message): M
   };
 }
 
+export function getConversationDateItems(
+  messages: Message[],
+  options: ConversationDateGroupingOptions = {},
+): ConversationDateItem[] {
+  const now = options.now ?? new Date();
+  const nowCivilDate = getCivilDateParts(now, options.timeZone);
+  const seenDateKeys = new Set<string>();
+  const items: ConversationDateItem[] = [];
+
+  for (const message of messages) {
+    const messageDate = new Date(message.createdAt);
+    const messageCivilDate = getCivilDateParts(messageDate, options.timeZone);
+    const dateKey = getCivilDateKey(messageCivilDate);
+
+    if (!seenDateKeys.has(dateKey)) {
+      seenDateKeys.add(dateKey);
+      items.push({
+        itemType: 'dateDivider',
+        key: `date-divider-${dateKey}`,
+        label: formatConversationDateLabel(messageDate, messageCivilDate, nowCivilDate, options.timeZone),
+      });
+    }
+
+    items.push({ itemType: 'message', key: `message-${message.id}`, message });
+  }
+
+  return items;
+}
+
 export function selectTab(_current: TabKey, next: TabKey): TabKey {
   return next;
 }
@@ -163,4 +207,55 @@ export function formatMessageTime(value: string): string {
 
 export function getChatPreview(chat: Chat): string {
   return chat.lastMessage.length > 80 ? `${chat.lastMessage.slice(0, 77)}...` : chat.lastMessage;
+}
+
+type CivilDateParts = {
+  day: number;
+  month: number;
+  year: number;
+};
+
+function getCivilDateParts(date: Date, timeZone?: string): CivilDateParts {
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone,
+  }).formatToParts(date);
+
+  return {
+    day: Number(parts.find(part => part.type === 'day')?.value),
+    month: Number(parts.find(part => part.type === 'month')?.value),
+    year: Number(parts.find(part => part.type === 'year')?.value),
+  };
+}
+
+function getCivilDateKey(date: CivilDateParts): string {
+  return `${date.year}-${String(date.month).padStart(2, '0')}-${String(date.day).padStart(2, '0')}`;
+}
+
+function getCivilDateOrdinal(date: CivilDateParts): number {
+  return Math.floor(Date.UTC(date.year, date.month - 1, date.day) / 86_400_000);
+}
+
+function formatConversationDateLabel(
+  date: Date,
+  messageDate: CivilDateParts,
+  nowDate: CivilDateParts,
+  timeZone?: string,
+): string {
+  const dayDifference = getCivilDateOrdinal(nowDate) - getCivilDateOrdinal(messageDate);
+  if (dayDifference === 0) {
+    return 'Сегодня';
+  }
+  if (dayDifference === 1) {
+    return 'Вчера';
+  }
+
+  return new Intl.DateTimeFormat('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: messageDate.year === nowDate.year ? undefined : 'numeric',
+    timeZone,
+  }).format(date);
 }
