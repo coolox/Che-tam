@@ -1,7 +1,7 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
 import { createLocalMessageStore } from '../src/messages/localMessageStore';
 import { createDebugLocalAckTransport } from '../src/messages/localOutbox';
-import { resolveLocalTestMode } from '../src/messages/localTestMode';
+import { getLocalTestModeConfig, resolveLocalTestMode } from '../src/messages/localTestMode';
 
 async function eventually(assertion: () => Promise<void> | void): Promise<void> {
   let lastError: unknown;
@@ -23,6 +23,13 @@ describe('explicit local test mode', () => {
     expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: '' }).enabled).toBe(false);
     expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: 'true' }).enabled).toBe(false);
     expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: '1' }).enabled).toBe(true);
+  });
+
+  it('extracts the embedded runtime config flag without mutating process env', () => {
+    expect(getLocalTestModeConfig({ expoConfig: { extra: { EXPO_PUBLIC_LOCAL_TEST_MODE: '1' } } }).enabled).toBe(true);
+    expect(getLocalTestModeConfig({ expoConfig: { extra: { EXPO_PUBLIC_LOCAL_TEST_MODE: '0' } } }).enabled).toBe(false);
+    expect(getLocalTestModeConfig({ expoConfig: { extra: {} } }).enabled).toBe(false);
+    expect(getLocalTestModeConfig({ expoConfig: null }).enabled).toBe(false);
   });
 
   it('keeps no-flag bootstrap empty and has no fake ack transport', async () => {
