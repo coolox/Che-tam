@@ -1,9 +1,38 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
 import { migrateDatabase } from '../src/storage/sqlite/migrate';
+import type { SqlExecutor, SqlResult, SqlValue } from '../src/storage/sqlite/contracts';
 
 const timestamp = '2026-10-03T12:00:00.000Z';
 
 describe('SQLite schema migration', () => {
+  it('enables SQLite foreign keys outside the migration transaction', async () => {
+    class TrackingDatabase extends InMemorySqliteDatabase {
+      public pragmaLocations: string[] = [];
+      private transactionDepth = 0;
+
+      override async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
+        this.transactionDepth += 1;
+        try {
+          return await super.transaction(work);
+        } finally {
+          this.transactionDepth -= 1;
+        }
+      }
+
+      override async execute(sql: string, params: readonly SqlValue[] = []): Promise<SqlResult> {
+        if (sql.replace(/\s+/g, ' ').trim().toLowerCase() === 'pragma foreign_keys = on') {
+          this.pragmaLocations.push(this.transactionDepth > 0 ? 'inside' : 'outside');
+        }
+        return super.execute(sql, params);
+      }
+    }
+
+    const database = new TrackingDatabase();
+    await migrateDatabase(database, timestamp);
+
+    expect(database.pragmaLocations).toEqual(['outside']);
+  });
+
   it('creates all eight application tables, indexes, and exactly one version-1 migration on a clean install', async () => {
     const database = new InMemorySqliteDatabase();
     await migrateDatabase(database, timestamp);

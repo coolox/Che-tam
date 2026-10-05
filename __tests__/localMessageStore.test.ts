@@ -1,5 +1,5 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
-import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
+import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, formatLocalDataError, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
 
 describe('local message store', () => {
   it('formats chat-list times in the selected device time zone', () => {
@@ -43,6 +43,17 @@ describe('local message store', () => {
     expect(EMPTY_CONVERSATION_TEXT).toBe('В этом чате пока нет сообщений');
     const store = createLocalMessageStore(async () => { throw new Error('private failure'); });
     await store.bootstrap();
-    expect(store.getSnapshot()).toMatchObject({ status: 'error', errorText: LOCAL_DATA_ERROR_TEXT });
+    expect(store.getSnapshot()).toMatchObject({ status: 'error' });
+    expect(store.getSnapshot().errorText).toMatch(/^Не удалось открыть локальные данные\. Попробуйте ещё раз\. Код: Error-[a-z0-9]{6}$/);
+    expect(store.getSnapshot().errorText).not.toContain('private failure');
+  });
+
+  it('formats bounded local error codes without stacks or raw messages', () => {
+    const errorText = formatLocalDataError(new TypeError('FOREIGN KEY constraint failed: messages.chat_id / secret token'));
+    expect(errorText.startsWith(LOCAL_DATA_ERROR_TEXT)).toBe(true);
+    expect(errorText).toMatch(/Код: TypeError-[a-z0-9]{6}$/);
+    expect(errorText).not.toContain('messages.chat_id');
+    expect(errorText).not.toContain('secret');
+    expect(errorText.length).toBeLessThanOrEqual(LOCAL_DATA_ERROR_TEXT.length + 40);
   });
 });

@@ -1,4 +1,22 @@
+jest.mock('@react-native-async-storage/async-storage', () => ({
+  __esModule: true,
+  default: { getItem: jest.fn(), setItem: jest.fn() },
+}));
+jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
+jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
+jest.mock('react-native-keyboard-controller', () => ({
+  KeyboardAvoidingView: 'KeyboardAvoidingView',
+  KeyboardProvider: ({ children }: { children: unknown }) => children,
+}));
+
 import { INITIAL_CHATS, INITIAL_MESSAGES } from '../src/ui/demoData';
+import {
+  CALL_UNAVAILABLE_TEXT,
+  getHeaderToFirstContentRowGap,
+  getSettingsAvatarModel,
+  resolveCallLogAction,
+  resolveFamilyCallAction,
+} from '../src/app/PreviewAppShell';
 import {
   appendOutgoingMessage,
   clearFamilySelection,
@@ -23,6 +41,7 @@ import {
   updateChatSearchQuery,
 } from '../src/ui/state';
 import { darkColors, lightColors } from '../src/ui/tokens';
+import type { TabKey } from '../src/ui/types';
 
 describe('UI Preview local behavior', () => {
   it('filters chats by family name, last message or local message text', () => {
@@ -189,6 +208,42 @@ describe('UI Preview local behavior', () => {
   it('selects callback call mode from call log action type', () => {
     expect(getCallbackCallMode('audio')).toBe('audio');
     expect(getCallbackCallMode('video')).toBe('video');
+  });
+
+  it('resolves Family and Calls actions to the local call screen or visible fallback', () => {
+    expect(resolveFamilyCallAction(INITIAL_CHATS, 'Мама и папа', 'audio')).toEqual({ type: 'open', chatId: 'parents', mode: 'audio' });
+    expect(resolveFamilyCallAction(INITIAL_CHATS, 'Лейла', 'video')).toEqual({ type: 'open', chatId: 'sister', mode: 'video' });
+    expect(resolveFamilyCallAction(INITIAL_CHATS, 'Нет такого', 'audio')).toEqual({ type: 'fallback', text: CALL_UNAVAILABLE_TEXT });
+
+    expect(resolveCallLogAction(INITIAL_CHATS, {
+      id: 'call-test',
+      chatId: 'parents',
+      name: 'Мама и папа',
+      initials: 'МП',
+      avatarColor: '#116149',
+      direction: 'missed',
+      occurredAt: '2026-09-22T12:14:00.000Z',
+      callbackType: 'video',
+    })).toEqual({ type: 'open', chatId: 'parents', mode: 'video' });
+    expect(resolveCallLogAction(INITIAL_CHATS, {
+      id: 'call-missing',
+      chatId: 'missing',
+      name: 'Нет чата',
+      initials: 'НЧ',
+      avatarColor: '#116149',
+      direction: 'incoming',
+      occurredAt: '2026-09-22T12:14:00.000Z',
+      callbackType: 'audio',
+    })).toEqual({ type: 'fallback', text: CALL_UNAVAILABLE_TEXT });
+  });
+
+  it('keeps the Settings profile avatar visible with existing self initials and color', () => {
+    expect(getSettingsAvatarModel()).toEqual({ color: '#116149', initials: 'АМ' });
+  });
+
+  it('keeps an exact 8dp gap from the header to the first row on every tab', () => {
+    const tabs: TabKey[] = ['chats', 'calls', 'family', 'settings'];
+    expect(tabs.map(tab => getHeaderToFirstContentRowGap(tab))).toEqual([8, 8, 8, 8]);
   });
 
   it('keeps light and dark theme token keys aligned', () => {

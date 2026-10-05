@@ -12,7 +12,7 @@ export const EMPTY_CONVERSATION_TEXT = 'В этом чате пока нет с�
 export type LocalDataSnapshot =
   | { status: 'loading'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null }
   | { status: 'ready'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null }
-  | { status: 'error'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: typeof LOCAL_DATA_ERROR_TEXT };
+  | { status: 'error'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: string };
 
 export type LocalMessageStore = {
   bootstrap(): Promise<void>;
@@ -24,6 +24,22 @@ export type LocalMessageStore = {
 const FIXTURE_TIMESTAMP = '2026-09-22T12:00:00.000Z';
 const LOCAL_PROFILE_ID = 'local-self';
 const RELATIVE_PROFILE_ID = 'local-relative';
+
+function hashErrorText(value: string): string {
+  let hash = 0x811c9dc5;
+  for (const character of value) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36).slice(0, 6).padStart(6, '0');
+}
+
+export function formatLocalDataError(error: unknown): string {
+  const name = error instanceof Error ? error.name : 'Error';
+  const message = error instanceof Error ? error.message : String(error);
+  const safeName = name.replace(/[^a-zA-Z0-9_ -]/g, '').trim().slice(0, 24) || 'Error';
+  return `${LOCAL_DATA_ERROR_TEXT} Код: ${safeName}-${hashErrorText(message)}`;
+}
 
 function initials(title: string): string {
   return title.split(/\s+/).filter(Boolean).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
@@ -124,9 +140,9 @@ export function createLocalMessageStore(factory: SqlDatabaseFactory, databaseNam
         repositories = createSqliteRepositories(database);
         await seedDevelopmentFixture(repositories);
         await refresh();
-      } catch {
+      } catch (error) {
         repositories = null;
-        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: LOCAL_DATA_ERROR_TEXT });
+        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
       }
     },
     async clearUnread(chatId) {
@@ -134,8 +150,8 @@ export function createLocalMessageStore(factory: SqlDatabaseFactory, databaseNam
       try {
         await repositories.clearChatUnread(chatId, FIXTURE_TIMESTAMP);
         await refresh();
-      } catch {
-        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: LOCAL_DATA_ERROR_TEXT });
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
       }
     },
     getSnapshot: () => snapshot,

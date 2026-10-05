@@ -95,12 +95,14 @@ import { useConnectionStatus } from '../hooks/useConnectionStatus';
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
 type AudioRoute = 'speaker' | 'earpiece';
-type LocalAvatar = { initials: string };
+type LocalAvatar = { color: string; initials: string };
 
 // React Native resolves bundled image assets through static require calls.
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const BRAND_MARK = require('../../assets/brand/che-tam-brand-mark.png') as number;
-const SELF_AVATAR: LocalAvatar = { initials: 'АМ' };
+const SELF_AVATAR: LocalAvatar = { color: '#116149', initials: 'АМ' };
+export const CALL_UNAVAILABLE_TEXT = 'Звонки появятся позже';
+export const HEADER_TO_FIRST_CONTENT_ROW_GAP = spacing.sm;
 const PIP_WIDTH = 116;
 const PIP_HEIGHT = 148;
 const PIP_CONTROLS_GAP = spacing.lg;
@@ -111,6 +113,37 @@ type PreviewAppShellProps = {
   onClearUnread: (chatId: string) => Promise<void>;
   onRetry: () => Promise<void>;
 };
+
+export function resolveFamilyCallChatId(chats: Chat[], memberName: string): string | null {
+  return chats.find(chat => chat.name === memberName)?.id ?? null;
+}
+
+export function resolveCallLogChatId(chats: Chat[], entry: CallLogEntry): string | null {
+  return chats.some(chat => chat.id === entry.chatId) ? entry.chatId : null;
+}
+
+export type CallActionResolution =
+  | { type: 'open'; chatId: string; mode: CallMode }
+  | { type: 'fallback'; text: typeof CALL_UNAVAILABLE_TEXT };
+
+export function resolveFamilyCallAction(chats: Chat[], memberName: string, mode: CallMode): CallActionResolution {
+  const chatId = resolveFamilyCallChatId(chats, memberName);
+  return chatId ? { type: 'open', chatId, mode } : { type: 'fallback', text: CALL_UNAVAILABLE_TEXT };
+}
+
+export function resolveCallLogAction(chats: Chat[], entry: CallLogEntry): CallActionResolution {
+  const chatId = resolveCallLogChatId(chats, entry);
+  return chatId ? { type: 'open', chatId, mode: getCallbackCallMode(entry.callbackType) } : { type: 'fallback', text: CALL_UNAVAILABLE_TEXT };
+}
+
+export function getSettingsAvatarModel(): LocalAvatar {
+  return SELF_AVATAR;
+}
+
+export function getHeaderToFirstContentRowGap(tab: TabKey): number {
+  void tab;
+  return HEADER_TO_FIRST_CONTENT_ROW_GAP;
+}
 
 export default function PreviewAppShell(props: PreviewAppShellProps) {
   return (
@@ -140,6 +173,7 @@ function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
   const [connectionHints, setConnectionHints] = useState(true);
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [selectedFamilyIds, setSelectedFamilyIds] = useState<string[]>([]);
+  const [callFallbackText, setCallFallbackText] = useState<string | null>(null);
 
   const { mode } = useTheme();
   const styles = useStyles();
@@ -268,15 +302,25 @@ function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
   };
 
   const startCallFromLog = (entry: CallLogEntry) => {
-    setSelectedChatId(entry.chatId);
-    startCall(getCallbackCallMode(entry.callbackType));
+    const action = resolveCallLogAction(chats, entry);
+    if (action.type === 'fallback') {
+      setCallFallbackText(action.text);
+      return;
+    }
+    setCallFallbackText(null);
+    setSelectedChatId(action.chatId);
+    startCall(action.mode);
   };
 
   const startFamilyCall = (memberName: string, mode: CallMode) => {
-    const familyChat = chats.find(chat => chat.name === memberName);
-    if (!familyChat && !chats[0]) return;
-    setSelectedChatId(familyChat?.id ?? chats[0].id);
-    startCall(mode);
+    const action = resolveFamilyCallAction(chats, memberName, mode);
+    if (action.type === 'fallback') {
+      setCallFallbackText(action.text);
+      return;
+    }
+    setCallFallbackText(null);
+    setSelectedChatId(action.chatId);
+    startCall(action.mode);
   };
 
   return (
@@ -292,6 +336,7 @@ function ThemedApp({ snapshot, onClearUnread, onRetry }: PreviewAppShellProps) {
           dataErrorText={snapshot.errorText}
           dataStatus={snapshot.status}
           callLog={callLog}
+          callFallbackText={callFallbackText}
           connectionHints={connectionHints}
           query={chatSearch.query}
           searchActive={chatSearch.active}
@@ -389,6 +434,7 @@ function HomeScreen({
   dataErrorText,
   dataStatus,
   callLog,
+  callFallbackText,
   connectionHints,
   query,
   searchActive,
@@ -418,6 +464,7 @@ function HomeScreen({
   dataErrorText: string | null;
   dataStatus: LocalDataSnapshot['status'];
   callLog: CallLogEntry[];
+  callFallbackText: string | null;
   connectionHints: boolean;
   query: string;
   searchActive: boolean;
@@ -463,7 +510,10 @@ function HomeScreen({
       ) : (
         <TopLevelHeader subtitle={getTabSubtitle(activeTab)} onSearch={() => undefined} />
       )}
-      <ScrollView contentContainerStyle={[styles.content, activeTab !== 'settings' && styles.topLevelListContent]}>
+      <ScrollView contentContainerStyle={styles.content}>
+        {callFallbackText && (activeTab === 'calls' || activeTab === 'family') ? (
+          <Text accessibilityLiveRegion="polite" style={styles.fallbackText}>{callFallbackText}</Text>
+        ) : null}
         {activeTab === 'chats' ? (
           <LocalChatsPanel
             chats={chats}
@@ -1524,7 +1574,7 @@ function SettingsTab({
   return (
     <View style={styles.stack}>
       <View style={styles.profilePanel}>
-        <View style={styles.avatar}>
+        <View style={[styles.avatar, { backgroundColor: SELF_AVATAR.color }]}>
           <Text style={styles.avatarText}>{SELF_AVATAR.initials}</Text>
         </View>
         <View>
@@ -1752,8 +1802,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   selectionCount: { color: colors.text, flex: 1, fontSize: 22, fontWeight: '800' },
   selectionActions: { alignItems: 'center', flexDirection: 'row', flexShrink: 0 },
-  content: { padding: spacing.md, paddingBottom: spacing.xl, gap: spacing.md },
-  topLevelListContent: { paddingTop: 0 },
+  content: { padding: spacing.md, paddingTop: HEADER_TO_FIRST_CONTENT_ROW_GAP, paddingBottom: spacing.xl, gap: spacing.md },
   stack: { gap: spacing.md },
   chatList: { marginHorizontal: -spacing.md },
   fullWidthList: { marginHorizontal: -spacing.md },
@@ -1817,6 +1866,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   hintText: { color: colors.textMuted, fontSize: typography.sm },
   emptyState: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.xl },
   emptyTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800' },
+  fallbackText: { color: colors.danger, fontSize: typography.sm, fontWeight: '800' },
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colors.accent,
