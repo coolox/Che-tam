@@ -3,9 +3,10 @@ const fs = require('fs') as { readFileSync(path: string, encoding: string): stri
 
 describe('connection banner wiring', () => {
   it('renders the accessible banner only in the open Conversation header without transport behavior', () => {
-    const source = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
-    const conversation = source.slice(source.indexOf('function ConversationScreen'), source.indexOf('function ComposerIconButton'));
-    const outsideConversation = source.replace(conversation, '');
+    const shell = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
+    const conversation = fs.readFileSync('src/app/screens/ConversationScreen.tsx', 'utf8');
+    const outsideConversation = shell;
+    const source = `${shell}\n${conversation}`;
 
     const renderedHookCalls = outsideConversation.match(/useConnectionStatus\(\)/g) ?? [];
 

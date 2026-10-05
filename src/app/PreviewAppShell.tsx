@@ -5,13 +5,11 @@ import {
   BellOff,
   Camera,
   Check,
-  CheckCheck,
   Ear,
   EllipsisVertical,
   Mic,
   MicOff,
   MessageCircle,
-  Paperclip,
   Phone,
   PhoneIncoming,
   PhoneMissed,
@@ -19,9 +17,7 @@ import {
   PhoneOutgoing,
   Pin,
   Search,
-  SendHorizontal,
   Settings,
-  Smile,
   Trash2,
   SwitchCamera,
   Users,
@@ -33,12 +29,11 @@ import {
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ImageStyle, LayoutChangeEvent, StyleProp } from 'react-native';
-import { KeyboardAvoidingView, KeyboardProvider } from 'react-native-keyboard-controller';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   BackHandler,
   Animated,
-  FlatList,
   Image,
   Keyboard,
   PanResponder,
@@ -64,13 +59,10 @@ import {
   clearChatSelection,
   clearFamilySelection,
   closeChatSearch,
-  formatMessageTime,
   getCallLogDisplayModel,
   getCallbackCallMode,
   getChatPreview,
   getMissedCallCount,
-  getComposerState,
-  getMessagePresentation,
   getOrderedChats,
   getTotalUnreadCount,
   openChatSearch,
@@ -83,14 +75,13 @@ import {
 } from '../ui/state';
 import { ThemeProvider, useTheme } from '../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../ui/tokens';
-import { CallLogEntry, Chat, Message, TabKey, TrafficModeKey } from '../ui/types';
+import { CallLogEntry, Chat, TabKey, TrafficModeKey } from '../ui/types';
 import {
   EMPTY_CHATS_TEXT,
-  EMPTY_CONVERSATION_TEXT,
   LOCAL_LOADING_TEXT,
   type LocalDataSnapshot,
 } from '../messages/localMessageStore';
-import { useConnectionStatus } from '../hooks/useConnectionStatus';
+import { ConversationScreen } from './screens/ConversationScreen';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
 type CallMode = 'audio' | 'video';
@@ -835,192 +826,6 @@ function ChatListRow({
       </View>
     </Pressable>
   );
-}
-
-function ConversationScreen({
-  chat,
-  composer,
-  dataErrorText,
-  dataStatus,
-  messages,
-  onBack,
-  onComposer,
-  onStartCall,
-  onRetryLocalData,
-}: {
-  chat: Chat;
-  composer: string;
-  dataErrorText: string | null;
-  dataStatus: LocalDataSnapshot['status'];
-  messages: Message[];
-  onBack: () => void;
-  onComposer: (value: string) => void;
-  onStartCall: (mode: CallMode) => void;
-  onRetryLocalData: () => void;
-}) {
-  const { colors } = useTheme();
-  const styles = useStyles();
-  const connection = useConnectionStatus();
-  const reversedMessages = useMemo(() => [...messages].reverse(), [messages]);
-  const composerState = getComposerState(composer);
-  const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
-
-  useEffect(() => {
-    Animated.timing(actionTransition, {
-      duration: 160,
-      toValue: composerState.action === 'send' ? 1 : 0,
-      useNativeDriver: true,
-    }).start();
-  }, [actionTransition, composerState.action]);
-
-  return (
-    <KeyboardAvoidingView automaticOffset behavior={Platform.OS === 'android' ? 'height' : 'padding'} style={styles.appShell}>
-      <View style={styles.conversationHeader}>
-        <HeaderIconButton accessibilityLabel="Назад" icon={<ArrowLeft color={colors.accent} size={24} />} onPress={onBack} />
-        <View style={[styles.avatarSmall, { backgroundColor: chat.avatarColor }]}>
-          <Text style={styles.avatarSmallText}>{chat.initials}</Text>
-        </View>
-        <View style={styles.conversationTitle}>
-          <Text numberOfLines={1} style={styles.chatName}>
-            {chat.name}
-          </Text>
-          <Text
-            accessibilityLabel={connection.accessibilityLabel}
-            accessibilityLiveRegion="polite"
-            accessibilityRole="text"
-            numberOfLines={1}
-            style={styles.connectionBanner}
-          >
-            {connection.text}
-          </Text>
-        </View>
-        <HeaderIconButton accessibilityLabel="Аудиозвонок" icon={<Phone color={colors.accent} size={22} />} onPress={() => onStartCall('audio')} />
-        <HeaderIconButton accessibilityLabel="Видеозвонок" icon={<Video color={colors.accent} size={22} />} onPress={() => onStartCall('video')} />
-        <HeaderIconButton accessibilityLabel="Меню чата" icon={<EllipsisVertical color={colors.accent} size={22} />} onPress={() => undefined} />
-      </View>
-      <View style={styles.messageArea}>
-        <View pointerEvents="none" style={styles.chatPattern}>
-          <View style={[styles.patternDot, styles.patternDotOne]} />
-          <View style={[styles.patternDot, styles.patternDotTwo]} />
-          <View style={[styles.patternRing, styles.patternRingOne]} />
-          <View style={[styles.patternRing, styles.patternRingTwo]} />
-        </View>
-        <FlatList
-          contentContainerStyle={styles.messages}
-          data={reversedMessages}
-          inverted
-          keyboardShouldPersistTaps="handled"
-          keyExtractor={message => message.id}
-          ListFooterComponent={
-            dataStatus === 'loading' ? <Text style={styles.dateDivider}>{LOCAL_LOADING_TEXT}</Text>
-              : dataStatus === 'error' ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{dataErrorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetryLocalData} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>
-                : messages.length === 0 ? <Text style={styles.dateDivider}>{EMPTY_CONVERSATION_TEXT}</Text>
-                  : <Text style={styles.dateDivider}>Сегодня</Text>
-          }
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          renderItem={({ item: message }) => <MessageBubble message={message} messages={messages} />}
-          style={styles.messageList}
-        />
-      </View>
-      <View style={styles.composerOverlay}>
-        <View style={styles.composerCapsule}>
-          <ComposerIconButton accessibilityLabel="Смайлы" icon={<Smile color={colors.textMuted} size={22} />} />
-          <TextInput
-            accessibilityLabel="Текст сообщения"
-            multiline
-            onChangeText={onComposer}
-            placeholder="Сообщение"
-            placeholderTextColor={colors.textMuted}
-            scrollEnabled
-            style={styles.composerInput}
-            value={composer}
-          />
-          <ComposerIconButton accessibilityLabel="Вложение" icon={<Paperclip color={colors.textMuted} size={22} />} />
-          {composerState.showCamera ? <ComposerIconButton accessibilityLabel="Камера" icon={<Camera color={colors.textMuted} size={22} />} /> : null}
-        </View>
-        <Pressable
-          accessibilityLabel={composerState.action === 'send' ? 'Отправить сообщение' : 'Голосовое сообщение'}
-          accessibilityRole="button"
-          accessibilityHint="Локальный preview: отправка сообщений пока недоступна"
-          onPress={undefined}
-          style={styles.composerAction}
-        >
-          <Animated.View
-            style={[
-              styles.composerActionIcon,
-              {
-                opacity: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [1, 0] }),
-                transform: [{ scale: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [1, 0.78] }) }],
-              },
-            ]}
-          >
-            <Mic color={colors.surface} size={23} />
-          </Animated.View>
-          <Animated.View
-            style={[
-              styles.composerActionIcon,
-              {
-                opacity: actionTransition,
-                transform: [{ scale: actionTransition.interpolate({ inputRange: [0, 1], outputRange: [0.78, 1] }) }],
-              },
-            ]}
-          >
-            <SendHorizontal color={colors.surface} size={23} />
-          </Animated.View>
-        </Pressable>
-      </View>
-      <Text accessibilityLabel="Отправка сообщений недоступна" style={styles.localOnlyComposerNote}>Локальный preview: отправка сообщений пока недоступна.</Text>
-    </KeyboardAvoidingView>
-  );
-}
-
-function ComposerIconButton({ accessibilityLabel, icon }: { accessibilityLabel: string; icon: ReactNode }) {
-  const styles = useStyles();
-  return (
-    <Pressable accessibilityLabel={accessibilityLabel} accessibilityRole="button" onPress={() => undefined} style={styles.composerIconButton}>
-      {icon}
-    </Pressable>
-  );
-}
-
-function MessageBubble({ message, messages }: { message: Message; messages: Message[] }) {
-  const { colors } = useTheme();
-  const styles = useStyles();
-  const presentation = getMessagePresentation(messages, message);
-  if (presentation.isCallEvent) {
-    return (
-      <View style={[styles.callEventBubble, presentation.isMissedCall && styles.missedCallEventBubble]}>
-        {presentation.isMissedCall ? <PhoneMissed color={colors.danger} size={17} /> : <Phone color={colors.textMuted} size={17} />}
-        <Text style={[styles.callEventText, presentation.isMissedCall && styles.missedCallEventText]}>{message.text}</Text>
-        <Text style={styles.callEventTime}>{formatMessageTime(message.createdAt)}</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View
-      style={[
-        styles.messageBubble,
-        message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
-        presentation.incomingTail && styles.incomingBubbleTail,
-      ]}
-    >
-      <Text style={styles.messageText}>{message.text}</Text>
-      <View style={styles.messageMetaRow}>
-        <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
-        <ReceiptIcon state={presentation.receipt} />
-      </View>
-    </View>
-  );
-}
-
-function ReceiptIcon({ state }: { state: 'none' | 'sent' | 'delivered' | 'read' }) {
-  const { colors } = useTheme();
-  if (state === 'none') {
-    return null;
-  }
-  const iconColor = state === 'read' ? colors.accent : colors.textMuted;
-  return state === 'sent' ? <Check color={iconColor} size={15} strokeWidth={2.5} /> : <CheckCheck color={iconColor} size={15} strokeWidth={2.5} />;
 }
 
 function HeaderIconButton({
