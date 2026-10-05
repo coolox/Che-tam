@@ -21,6 +21,10 @@ export type LocalMessageStore = {
   subscribe(listener: () => void): () => void;
 };
 
+type LocalMessageStoreOptions = {
+  developmentSeedEnabled?: boolean;
+};
+
 const FIXTURE_TIMESTAMP = '2026-09-22T12:00:00.000Z';
 const LOCAL_PROFILE_ID = 'local-self';
 const RELATIVE_PROFILE_ID = 'local-relative';
@@ -111,9 +115,18 @@ async function seedDevelopmentFixture(repositories: SqliteRepositories): Promise
   }
 }
 
-export function createLocalMessageStore(factory: SqlDatabaseFactory, databaseName = 'che-tam-local.db'): LocalMessageStore {
+function isDevelopmentBuild(): boolean {
+  return typeof __DEV__ !== 'undefined' && __DEV__;
+}
+
+export function createLocalMessageStore(
+  factory: SqlDatabaseFactory,
+  databaseName = 'che-tam-local.db',
+  options: LocalMessageStoreOptions = {},
+): LocalMessageStore {
   let snapshot: LocalDataSnapshot = { status: 'loading', chats: [], messagesByChat: {}, errorText: null };
   let repositories: SqliteRepositories | null = null;
+  const developmentSeedEnabled = options.developmentSeedEnabled ?? isDevelopmentBuild();
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   const setSnapshot = (next: LocalDataSnapshot) => { snapshot = next; notify(); };
@@ -138,7 +151,7 @@ export function createLocalMessageStore(factory: SqlDatabaseFactory, databaseNam
         const database = await factory(databaseName);
         await migrateDatabase(database, FIXTURE_TIMESTAMP);
         repositories = createSqliteRepositories(database);
-        await seedDevelopmentFixture(repositories);
+        if (developmentSeedEnabled) await seedDevelopmentFixture(repositories);
         await refresh();
       } catch (error) {
         repositories = null;

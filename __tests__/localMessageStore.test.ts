@@ -27,6 +27,13 @@ describe('local message store', () => {
     expect(store.getSnapshot().messagesByChat.parents).toHaveLength(7);
   });
 
+  it('does not seed demo data when development seed is disabled', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: false });
+    await store.bootstrap();
+    expect(store.getSnapshot()).toEqual({ status: 'ready', chats: [], messagesByChat: {}, errorText: null });
+  });
+
   it('clears persisted unread when opening a chat', async () => {
     const database = new InMemorySqliteDatabase();
     const store = createLocalMessageStore(async () => database);
