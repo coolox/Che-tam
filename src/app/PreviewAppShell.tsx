@@ -100,6 +100,7 @@ const PIP_CONTROLS_GAP = spacing.lg;
 const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
 
 type PreviewAppShellProps = {
+  isLocalTestModeEnabled?: boolean;
   snapshot: LocalDataSnapshot;
   onClearUnread: (chatId: string) => Promise<void>;
   onRetry: () => Promise<void>;
@@ -150,7 +151,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ snapshot, onClearUnread, onRetry, onRetryMessage, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearUnread, onRetry, onRetryMessage, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -337,6 +338,7 @@ function ThemedApp({ snapshot, onClearUnread, onRetry, onRetryMessage, onSendMes
           callLog={callLog}
           callFallbackText={callFallbackText}
           connectionHints={connectionHints}
+          isLocalTestModeEnabled={isLocalTestModeEnabled}
           query={chatSearch.query}
           searchActive={chatSearch.active}
           selectedChatIds={selectedChatIds}
@@ -437,6 +439,7 @@ function HomeScreen({
   callLog,
   callFallbackText,
   connectionHints,
+  isLocalTestModeEnabled,
   query,
   searchActive,
   selectedChatIds,
@@ -467,6 +470,7 @@ function HomeScreen({
   callLog: CallLogEntry[];
   callFallbackText: string | null;
   connectionHints: boolean;
+  isLocalTestModeEnabled: boolean;
   query: string;
   searchActive: boolean;
   selectedChatIds: string[];
@@ -539,6 +543,7 @@ function HomeScreen({
         {activeTab === 'settings' ? (
           <SettingsTab
             connectionHints={connectionHints}
+            isLocalTestModeEnabled={isLocalTestModeEnabled}
             trafficMode={trafficMode}
             onSetConnectionHints={onSetConnectionHints}
             onSetTrafficMode={onSetTrafficMode}
@@ -1374,11 +1379,13 @@ function FamilyRow({
 
 function SettingsTab({
   connectionHints,
+  isLocalTestModeEnabled,
   trafficMode,
   onSetConnectionHints,
   onSetTrafficMode,
 }: {
   connectionHints: boolean;
+  isLocalTestModeEnabled: boolean;
   trafficMode: TrafficModeKey;
   onSetConnectionHints: (value: boolean) => void;
   onSetTrafficMode: (value: TrafficModeKey) => void;
@@ -1399,6 +1406,7 @@ function SettingsTab({
       </View>
       <View style={styles.infoPanel}>
         <Text style={styles.infoTitle}>Профиль трафика</Text>
+        {isLocalTestModeEnabled ? <Text accessibilityLabel="Тестовая сборка" style={styles.bodyText}>Тестовая сборка</Text> : null}
         <View style={styles.segmented}>
           {TRAFFIC_MODES.map(mode => (
             <Pressable

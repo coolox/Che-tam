@@ -14,7 +14,7 @@ describe('local message store', () => {
 
   it('migrates, seeds only once, and reads chats/messages from repositories', async () => {
     const database = new InMemorySqliteDatabase();
-    const store = createLocalMessageStore(async () => database);
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: true });
     expect(store.getSnapshot().status).toBe('loading');
     await store.bootstrap();
     const first = store.getSnapshot();
@@ -36,7 +36,7 @@ describe('local message store', () => {
 
   it('clears persisted unread when opening a chat', async () => {
     const database = new InMemorySqliteDatabase();
-    const store = createLocalMessageStore(async () => database);
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: true });
     await store.bootstrap();
     await store.clearUnread('parents');
     expect(store.getSnapshot().chats.find((chat) => chat.id === 'parents')?.unread).toBe(0);

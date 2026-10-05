@@ -5,6 +5,7 @@ import { createSqliteRepositories, type SqliteRepositories, type StoredChat, typ
 import type { SqlDatabaseFactory } from '../storage/sqlite/contracts';
 import { subscribeToNetworkAvailability, type NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { createDebugLocalAckTransport, createLocalOutboxWorker, type LocalOutboxTransport, type LocalOutboxWorker } from './localOutbox';
+import { getLocalTestModeConfig, type LocalTestModeConfig } from './localTestMode';
 
 export const LOCAL_DATA_ERROR_TEXT = 'Не удалось открыть локальные данные. Попробуйте ещё раз.';
 export const LOCAL_LOADING_TEXT = 'Загружаем локальные сообщения…';
@@ -30,6 +31,7 @@ type LocalMessageStoreOptions = {
   developmentSeedEnabled?: boolean;
   idFactory?: () => string;
   initialNetworkAvailable?: boolean;
+  localTestMode?: LocalTestModeConfig;
   networkAvailabilitySource?: NetworkAvailabilitySource;
   now?: () => Date;
   transport?: LocalOutboxTransport | null;
@@ -133,10 +135,6 @@ async function seedDevelopmentFixture(repositories: SqliteRepositories): Promise
   }
 }
 
-function isDevelopmentBuild(): boolean {
-  return typeof __DEV__ !== 'undefined' && __DEV__;
-}
-
 function createUuid(): string {
   const randomUuid = globalThis.crypto?.randomUUID;
   if (randomUuid) return randomUuid.call(globalThis.crypto);
@@ -156,11 +154,12 @@ export function createLocalMessageStore(
   let outboxWorker: LocalOutboxWorker | null = null;
   let networkAvailable = options.initialNetworkAvailable ?? false;
   let unsubscribeNetworkAvailability: (() => void) | null = null;
-  const developmentSeedEnabled = options.developmentSeedEnabled ?? isDevelopmentBuild();
+  const localTestMode = options.localTestMode ?? getLocalTestModeConfig();
+  const developmentSeedEnabled = options.developmentSeedEnabled ?? localTestMode.enabled;
   const idFactory = options.idFactory ?? createUuid;
   const networkAvailabilitySource = options.networkAvailabilitySource ?? silentNetworkAvailabilitySource;
   const now = options.now ?? (() => new Date());
-  const transport = options.transport === undefined ? createDebugLocalAckTransport() : options.transport;
+  const transport = options.transport === undefined ? createDebugLocalAckTransport(localTestMode) : options.transport;
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   const setSnapshot = (next: LocalDataSnapshot) => { snapshot = next; notify(); };

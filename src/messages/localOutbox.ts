@@ -1,5 +1,6 @@
 import { calculateRetryDelayMs } from '../transport/backoff';
 import type { OutboxEntry, SqliteRepositories } from '../storage/sqlite/repositories';
+import { getLocalTestModeConfig, type LocalTestModeConfig } from './localTestMode';
 
 export type LocalOutboxTransportResult = { ok: true } | { ok: false; category: 'offline' | 'timeout' | 'failed' | 'terminal' };
 
@@ -26,12 +27,8 @@ export type LocalOutboxWorkerOptions = {
 
 const DEFAULT_SEND_TIMEOUT_MS = 30_000;
 
-function isDevelopmentBuild(): boolean {
-  return typeof __DEV__ !== 'undefined' && __DEV__;
-}
-
-export function createDebugLocalAckTransport(): LocalOutboxTransport | null {
-  if (!isDevelopmentBuild()) return null;
+export function createDebugLocalAckTransport(localTestMode: LocalTestModeConfig = getLocalTestModeConfig()): LocalOutboxTransport | null {
+  if (!localTestMode.enabled) return null;
   return { send: async () => ({ ok: true }) };
 }
 

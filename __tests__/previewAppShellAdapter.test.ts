@@ -13,7 +13,7 @@ describe('PreviewAppShell local data adapter', () => {
 
   it('publishes refreshed snapshots to subscribers after persisted unread is cleared', async () => {
     const database = new InMemorySqliteDatabase();
-    const store = createLocalMessageStore(async () => database);
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: true });
     const observedUnread: number[] = [];
     const unsubscribe = store.subscribe(() => {
       const parents = store.getSnapshot().chats.find((chat) => chat.id === 'parents');

@@ -71,14 +71,14 @@ describe('real SQLite local bootstrap', () => {
     };
 
     try {
-      const firstStore = createLocalMessageStore(factory);
+      const firstStore = createLocalMessageStore(factory, 'che-tam-local.db', { developmentSeedEnabled: true });
       await firstStore.bootstrap();
       expect(firstStore.getSnapshot().status).toBe('ready');
       expect(firstStore.getSnapshot().chats.map(chat => chat.id)).toContain('parents');
       expect(firstStore.getSnapshot().messagesByChat.parents.map(message => message.id)).toContain('parents-1');
       opened.pop()?.close();
 
-      const secondStore = createLocalMessageStore(factory);
+      const secondStore = createLocalMessageStore(factory, 'che-tam-local.db', { developmentSeedEnabled: true });
       await secondStore.bootstrap();
       expect(secondStore.getSnapshot().status).toBe('ready');
       expect(secondStore.getSnapshot().chats.map(chat => chat.id)).toEqual(['parents', 'sister', 'grandma', 'brother', 'family', 'cousin']);

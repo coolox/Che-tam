@@ -274,6 +274,14 @@ describe('UI Preview local behavior', () => {
     expect(getSettingsAvatarModel()).toEqual({ color: '#116149', initials: 'АМ' });
   });
 
+  it('threads the local test-mode Settings label behind an explicit boolean prop', () => {
+    const previewSource = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
+    const appSource = fs.readFileSync('src/app/AppShell.tsx', 'utf8');
+
+    expect(previewSource).toContain('isLocalTestModeEnabled ? <Text accessibilityLabel="Тестовая сборка" style={styles.bodyText}>Тестовая сборка</Text> : null');
+    expect(appSource).toContain('isLocalTestModeEnabled={localTestMode.enabled}');
+  });
+
   it('keeps an exact 8dp gap from the header to the first row on every tab', () => {
     const tabs: TabKey[] = ['chats', 'calls', 'family', 'settings'];
     expect(tabs.map(tab => getHeaderToFirstContentRowGap(tab))).toEqual([8, 8, 8, 8]);
