@@ -59,6 +59,9 @@ describe('real SQLite local bootstrap', () => {
         body: 'local body',
         createdAt: timestamp,
         deliveryState: 'queued',
+        replyToMessageId: null,
+        replySenderName: null,
+        replyPreview: null,
         updatedAt: timestamp,
       })).rejects.toThrow(/FOREIGN KEY constraint failed/i);
       database.close();

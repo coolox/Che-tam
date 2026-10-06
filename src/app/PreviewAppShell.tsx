@@ -72,6 +72,7 @@ import {
   toggleChatSelection,
   toggleFamilySelection,
   updateChatSearchQuery,
+  type ReplyTarget,
 } from '../ui/state';
 import { ThemeProvider, useTheme } from '../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../ui/tokens';
@@ -107,11 +108,12 @@ type PreviewAppShellProps = {
   snapshot: LocalDataSnapshot;
   onClearComposerDraft: (chatId: string) => Promise<void>;
   onClearUnread: (chatId: string) => Promise<void>;
+  onDeleteMessageForMe: (messageId: string) => Promise<void>;
   onReadComposerDraft: (chatId: string) => Promise<string | null>;
   onRetry: () => Promise<void>;
   onRetryMessage: (clientMessageId: string) => Promise<{ retried: boolean }>;
   onSaveComposerDraft: (chatId: string, draft: string) => Promise<void>;
-  onSendMessage: (chatId: string, draft: string) => Promise<{ sent: boolean; clientMessageId: string | null }>;
+  onSendMessage: (chatId: string, draft: string, replyTarget?: ReplyTarget | null) => Promise<{ sent: boolean; clientMessageId: string | null }>;
 };
 
 export function isFreshComposerDraftLoad(requestId: number, latestRequestId: number, requestedChatId: string, currentChatId: string): boolean {
@@ -161,7 +163,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onDeleteMessageForMe, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -326,15 +328,16 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
     setScreen('call');
   };
 
-  const sendMessage = async () => {
-    if (!selectedChat) return;
+  const sendMessage = async (replyTarget: ReplyTarget | null) => {
+    if (!selectedChat) return false;
     const chatId = selectedChat.id;
     const draft = composer;
-    const result = await onSendMessage(chatId, draft);
+    const result = await onSendMessage(chatId, draft, replyTarget);
     if (result.sent) {
       await onClearComposerDraft(chatId);
       if (selectedChatIdRef.current === chatId) setComposer('');
     }
+    return result.sent;
   };
 
   const updateComposer = (draft: string) => {
@@ -419,6 +422,7 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
           messages={selectedMessages}
           onBack={() => setScreen('home')}
           onComposer={updateComposer}
+          onDeleteMessageForMe={(messageId) => void onDeleteMessageForMe(messageId)}
           onRetryMessage={(clientMessageId) => void onRetryMessage(clientMessageId)}
           onSendMessage={sendMessage}
           onStartCall={startCall}

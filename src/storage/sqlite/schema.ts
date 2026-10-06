@@ -71,9 +71,17 @@ export const SCHEMA_V2_STATEMENTS = [
   )`,
 ] as const;
 
+export const SCHEMA_V3_STATEMENTS = [
+  'ALTER TABLE messages ADD COLUMN reply_to_message_id TEXT NULL REFERENCES messages(id) ON DELETE SET NULL',
+  'ALTER TABLE messages ADD COLUMN reply_sender_name TEXT NULL',
+  'ALTER TABLE messages ADD COLUMN reply_preview TEXT NULL',
+  'CREATE INDEX IF NOT EXISTS idx_messages_reply_to_message_id ON messages(reply_to_message_id)',
+] as const;
+
 export const SQLITE_MIGRATIONS = [
   { version: 1, statements: SCHEMA_V1_STATEMENTS },
   { version: 2, statements: SCHEMA_V2_STATEMENTS },
+  { version: 3, statements: SCHEMA_V3_STATEMENTS },
 ] as const;
 
 export const SCHEMA_VERSION = SQLITE_MIGRATIONS[SQLITE_MIGRATIONS.length - 1].version;

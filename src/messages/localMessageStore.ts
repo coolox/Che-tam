@@ -6,6 +6,7 @@ import type { SqlDatabaseFactory } from '../storage/sqlite/contracts';
 import { subscribeToNetworkAvailability, type NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { createDebugLocalAckTransport, createLocalOutboxWorker, type LocalOutboxTransport, type LocalOutboxWorker } from './localOutbox';
 import { getLocalTestModeConfig, type LocalTestModeConfig } from './localTestMode';
+import type { ReplyTarget } from '../ui/state';
 
 export const LOCAL_DATA_ERROR_TEXT = 'Не удалось открыть локальные данные. Попробуйте ещё раз.';
 export const LOCAL_LOADING_TEXT = 'Загружаем локальные сообщения…';
@@ -27,13 +28,14 @@ export type LocalDataSnapshot =
 export type LocalMessageStore = {
   bootstrap(): Promise<void>;
   clearComposerDraft(chatId: string): Promise<void>;
+  deleteMessageForMe(messageId: string): Promise<void>;
   clearUnread(chatId: string): Promise<void>;
   dispose(): void;
   getSnapshot(): LocalDataSnapshot;
   readComposerDraft(chatId: string): Promise<string | null>;
   retryTextMessage(clientMessageId: string): Promise<{ retried: boolean }>;
   saveComposerDraft(chatId: string, draft: string): Promise<void>;
-  sendTextMessage(chatId: string, draft: string): Promise<{ sent: boolean; clientMessageId: string | null }>;
+  sendTextMessage(chatId: string, draft: string, replyTarget?: ReplyTarget | null): Promise<{ sent: boolean; clientMessageId: string | null }>;
   subscribe(listener: () => void): () => void;
 };
 
@@ -122,6 +124,11 @@ function messageToViewModel(message: StoredMessage): Message {
     read: message.deliveryState === 'read',
     deliveryState: localDeliveryState,
     kind: 'text',
+    replyTo: message.replySenderName && message.replyPreview ? {
+      messageId: message.replyToMessageId,
+      senderName: message.replySenderName,
+      preview: message.replyPreview,
+    } : undefined,
   };
 }
 
@@ -167,6 +174,9 @@ async function seedDevelopmentFixture(repositories: SqliteRepositories): Promise
         body: fixtureMessage.text,
         createdAt: fixtureMessage.createdAt,
         deliveryState: fixtureMessage.read ? 'read' : fixtureMessage.delivered ? 'delivered' : 'queued',
+        replyToMessageId: null,
+        replySenderName: null,
+        replyPreview: null,
         updatedAt: FIXTURE_TIMESTAMP,
       });
     }
@@ -263,6 +273,15 @@ export function createLocalMessageStore(
         setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
+    async deleteMessageForMe(messageId) {
+      if (!repositories) return;
+      try {
+        await repositories.deleteMessageForMe(messageId);
+        await refresh();
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
+      }
+    },
     dispose() {
       unsubscribeNetworkAvailability?.();
       unsubscribeNetworkAvailability = null;
@@ -306,7 +325,7 @@ export function createLocalMessageStore(
         setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
-    async sendTextMessage(chatId, draft) {
+    async sendTextMessage(chatId, draft, replyTarget = null) {
       if (!repositories) return { sent: false, clientMessageId: null };
       const body = draft.trim();
       if (!body) return { sent: false, clientMessageId: null };
@@ -320,6 +339,9 @@ export function createLocalMessageStore(
         body,
         createdAt,
         deliveryState: 'queued',
+        replyToMessageId: replyTarget?.messageId ?? null,
+        replySenderName: replyTarget?.senderName ?? null,
+        replyPreview: replyTarget?.preview ?? null,
         updatedAt: createdAt,
       };
       try {

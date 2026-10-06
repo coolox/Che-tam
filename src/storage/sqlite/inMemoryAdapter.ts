@@ -37,6 +37,7 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       return { changes: 0 };
     }
     if (normalized.startsWith('pragma ')) return { changes: 0 };
+    if (normalized.startsWith('alter table ')) return { changes: 0 };
     const table = /create table if not exists ([a-z_]+)/.exec(normalized)?.[1];
     if (table) { this.addTable(table); return { changes: 0 }; }
     const index = /create index if not exists ([a-z_]+)/.exec(normalized)?.[1];
@@ -65,6 +66,16 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       row.updated_at = params[0];
       return { changes: 1 };
     }
+    if (updated === 'messages' && normalized.includes('reply_to_message_id = null')) {
+      let changes = 0;
+      for (const row of this.rows('messages')) {
+        if (row.reply_to_message_id === params[0]) {
+          row.reply_to_message_id = null;
+          changes += 1;
+        }
+      }
+      return { changes };
+    }
     if (updated === 'messages' && normalized.includes("delivery_state = 'not_sent'")) {
       const row = this.rows('messages').find((candidate) => candidate.client_message_id === params[1] && candidate.delivery_state === 'queued');
       if (!row) return { changes: 0 };
@@ -84,10 +95,10 @@ export class InMemorySqliteDatabase implements SqlDatabase {
       return { changes: 1 };
     }
     const deleted = /delete from ([a-z_]+)/.exec(normalized)?.[1];
-    if ((deleted === 'outbox' && normalized.includes('where client_message_id = ?')) || (deleted === 'chat_drafts' && normalized.includes('where chat_id = ?'))) {
+    if ((deleted === 'outbox' && normalized.includes('where client_message_id = ?')) || (deleted === 'chat_drafts' && normalized.includes('where chat_id = ?')) || (deleted === 'messages' && normalized.includes('where id = ?')) || (deleted === 'message_receipts' && normalized.includes('where message_id = ?'))) {
       const rows = this.rows(deleted);
       const previousLength = rows.length;
-      const key = deleted === 'outbox' ? 'client_message_id' : 'chat_id';
+      const key = deleted === 'outbox' ? 'client_message_id' : deleted === 'messages' ? 'id' : deleted === 'message_receipts' ? 'message_id' : 'chat_id';
       this.state.rows.set(deleted, rows.filter((row) => row[key] !== params[0]));
       return { changes: previousLength - this.rows(deleted).length };
     }
@@ -103,11 +114,14 @@ export class InMemorySqliteDatabase implements SqlDatabase {
     if (normalized.includes('where scope = ?')) result = result.filter((row) => row.scope === params[0]);
     if (normalized.includes('where chat_id = ?')) result = result.filter((row) => row.chat_id === params[0]);
     if (normalized.includes('where client_message_id = ?')) result = result.filter((row) => row.client_message_id === params[0]);
+    if (normalized.includes('where id = ?')) result = result.filter((row) => row.id === params[0]);
     if (normalized.includes('sender_id = ?')) result = result.filter((row) => row.sender_id === params[1]);
     if (normalized.includes("delivery_state = 'not_sent'")) result = result.filter((row) => row.delivery_state === 'not_sent');
     if (normalized.includes('order by last_message_at')) result.sort((a, b) => (a.last_message_at === null ? 1 : b.last_message_at === null ? -1 : String(b.last_message_at).localeCompare(String(a.last_message_at))) || String(a.id).localeCompare(String(b.id)));
     if (normalized.includes('order by created_at asc, id asc')) result.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.id).localeCompare(String(b.id)));
+    if (normalized.includes('order by created_at desc, id desc')) result.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)) || String(b.id).localeCompare(String(a.id)));
     if (normalized.includes('order by created_at asc, client_message_id asc')) result.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)) || String(a.client_message_id).localeCompare(String(b.client_message_id)));
+    if (normalized.includes('limit 1')) result = result.slice(0, 1);
     if (normalized.startsWith('select cursor')) result = result.map((row) => ({ cursor: row.cursor }));
     return result as T[];
   }

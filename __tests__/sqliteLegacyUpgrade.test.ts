@@ -96,13 +96,41 @@ const release062DemoMessagesFrom9596486 = [
 
 type LegacyFixture = {
   name: string;
+  expectedMigrationVersions: number[];
   expectedRetainedRows: Record<string, string[]>;
+  expectedDrafts?: { chat_id: string; text: string; updated_at: string }[];
   migrate(database: RealSqliteDatabase): Promise<void>;
 };
+
+async function seedLegacyV1Database(database: RealSqliteDatabase): Promise<void> {
+  for (const statement of legacyV1StatementsFrom0c20088) {
+    await database.execute(statement);
+  }
+  await database.execute('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)', [1, legacyTimestamp]);
+  await database.execute('INSERT INTO profiles(id, display_name, avatar_url, updated_at) VALUES (?, ?, ?, ?)', [
+    'legacy-profile',
+    'Legacy Profile',
+    null,
+    legacyTimestamp,
+  ]);
+  await database.execute('INSERT INTO chats(id, title, kind, last_message_at, unread_count, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+    'legacy-chat',
+    'Legacy Chat',
+    'direct',
+    legacyTimestamp,
+    3,
+    legacyTimestamp,
+  ]);
+  await database.execute(
+    'INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    ['legacy-message', 'legacy-chat', 'legacy-client-message', 'legacy-profile', 'legacy body', legacyTimestamp, 'queued', legacyTimestamp],
+  );
+}
 
 const legacyFixtures: readonly LegacyFixture[] = [
   {
     name: 'pre-v1-v0',
+    expectedMigrationVersions: [0, ...listSqliteMigrationVersions()],
     expectedRetainedRows: { v0_user_data: ['legacy-0'] },
     async migrate(database) {
       await database.execute(`CREATE TABLE schema_migrations (
@@ -116,40 +144,33 @@ const legacyFixtures: readonly LegacyFixture[] = [
   },
   {
     name: 'v1-0c20088',
+    expectedMigrationVersions: listSqliteMigrationVersions(),
     expectedRetainedRows: { profiles: ['legacy-profile'], chats: ['legacy-chat'], messages: ['legacy-message'] },
     async migrate(database) {
-      for (const statement of legacyV1StatementsFrom0c20088) {
-        await database.execute(statement);
-      }
-      await database.execute('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)', [1, legacyTimestamp]);
-      await database.execute('INSERT INTO profiles(id, display_name, avatar_url, updated_at) VALUES (?, ?, ?, ?)', [
-        'legacy-profile',
-        'Legacy Profile',
-        null,
-        legacyTimestamp,
-      ]);
-      await database.execute('INSERT INTO chats(id, title, kind, last_message_at, unread_count, updated_at) VALUES (?, ?, ?, ?, ?, ?)', [
+      await seedLegacyV1Database(database);
+    },
+  },
+  {
+    name: 'v2-chat-drafts-already-migrated',
+    expectedMigrationVersions: listSqliteMigrationVersions(),
+    expectedRetainedRows: { profiles: ['legacy-profile'], chats: ['legacy-chat'], messages: ['legacy-message'] },
+    expectedDrafts: [{ chat_id: 'legacy-chat', text: 'Legacy draft', updated_at: legacyTimestamp }],
+    async migrate(database) {
+      await seedLegacyV1Database(database);
+      await database.execute(`CREATE TABLE IF NOT EXISTS chat_drafts (
+        chat_id TEXT PRIMARY KEY REFERENCES chats(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )`);
+      await database.execute('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)', [2, legacyTimestamp]);
+      await database.execute('INSERT INTO chat_drafts(chat_id, text, updated_at) VALUES (?, ?, ?)', [
         'legacy-chat',
-        'Legacy Chat',
-        'direct',
-        legacyTimestamp,
-        3,
+        'Legacy draft',
         legacyTimestamp,
       ]);
-      await database.execute(
-        'INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ['legacy-message', 'legacy-chat', 'legacy-client-message', 'legacy-profile', 'legacy body', legacyTimestamp, 'queued', legacyTimestamp],
-      );
     },
   },
 ];
-
-function expectedMigrationVersions(startVersion: number): number[] {
-  return [
-    ...(startVersion === 0 ? [0] : []),
-    ...listSqliteMigrationVersions(),
-  ];
-}
 
 async function createRelease062DemoSeedFrom9596486(database: RealSqliteDatabase): Promise<void> {
   for (const statement of legacyV1StatementsFrom0c20088) {
@@ -193,6 +214,17 @@ async function createRelease062DemoSeedFrom9596486(database: RealSqliteDatabase)
       ],
     );
   }
+}
+
+async function expectReplySchemaV3(database: RealSqliteDatabase): Promise<void> {
+  expect((await database.query<{ name: string }>('PRAGMA table_info(messages)')).map(row => row.name)).toEqual(expect.arrayContaining([
+    'reply_to_message_id',
+    'reply_sender_name',
+    'reply_preview',
+  ]));
+  expect(await database.query('SELECT name FROM sqlite_master WHERE type = ? AND name = ?', ['index', 'idx_messages_reply_to_message_id'])).toEqual([
+    { name: 'idx_messages_reply_to_message_id' },
+  ]);
 }
 
 async function run0c20088BootstrapBehavior(database: RealSqliteDatabase): Promise<void> {
@@ -239,13 +271,17 @@ describe('legacy SQLite upgrades on real node:sqlite', () => {
       await migrateDatabase(database, timestamp);
 
       expect(await database.query('SELECT version, applied_at FROM schema_migrations ORDER BY version ASC')).toEqual(
-        expectedMigrationVersions(fixture.name === 'pre-v1-v0' ? 0 : 1).map(version => ({ version, applied_at: version === 0 ? legacyTimestamp : expect.any(String) })),
+        fixture.expectedMigrationVersions.map(version => ({ version, applied_at: version === 0 ? legacyTimestamp : expect.any(String) })),
       );
       expect(await database.query('SELECT name FROM sqlite_master WHERE type = ? AND name = ?', ['table', 'chat_drafts'])).toEqual([{ name: 'chat_drafts' }]);
+      await expectReplySchemaV3(database);
       expect(Math.max(...(await database.query<{ version: number }>('SELECT version FROM schema_migrations')).map(row => row.version))).toBe(SCHEMA_VERSION);
 
       for (const [table, ids] of Object.entries(fixture.expectedRetainedRows)) {
         expect((await database.query<{ id: string }>(`SELECT id FROM ${table} ORDER BY id ASC`)).map(row => row.id)).toEqual(ids);
+      }
+      if (fixture.expectedDrafts) {
+        expect(await database.query('SELECT chat_id, text, updated_at FROM chat_drafts ORDER BY chat_id ASC')).toEqual(fixture.expectedDrafts);
       }
       database.close();
     });
@@ -269,6 +305,7 @@ describe('legacy SQLite upgrades on real node:sqlite', () => {
         expect(store.getSnapshot()).toMatchObject({ status: 'ready', errorText: null });
         expect(store.getSnapshot().chats.map(chat => chat.id)).toEqual(['legacy-chat']);
         expect(store.getSnapshot().messagesByChat['legacy-chat'].map(message => message.id)).toEqual(['legacy-message']);
+        expect(store.getSnapshot().messagesByChat['legacy-chat'][0].replyTo).toBeUndefined();
       } finally {
         store.dispose();
         for (const database of opened) database.close();
@@ -328,8 +365,10 @@ describe('legacy SQLite upgrades on real node:sqlite', () => {
         expect(await verifyDatabase.query('SELECT version, applied_at FROM schema_migrations ORDER BY version ASC')).toEqual([
           { version: 1, applied_at: legacyTimestamp },
           { version: 2, applied_at: legacyTimestamp },
+          { version: 3, applied_at: legacyTimestamp },
         ]);
         expect(await verifyDatabase.query('SELECT name FROM sqlite_master WHERE type = ? AND name = ?', ['table', 'chat_drafts'])).toEqual([{ name: 'chat_drafts' }]);
+        await expectReplySchemaV3(verifyDatabase);
         expect((await verifyDatabase.query<{ id: string }>('SELECT id FROM chats ORDER BY last_message_at IS NULL ASC, last_message_at DESC, id ASC')).map(row => row.id)).toEqual([
           'parents',
           'sister',

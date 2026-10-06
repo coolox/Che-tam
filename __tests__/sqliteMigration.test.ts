@@ -6,7 +6,7 @@ const timestamp = '2026-10-03T12:00:00.000Z';
 
 describe('SQLite schema migration', () => {
   it('declares contiguous migration versions for permanent fixture coverage', () => {
-    expect(listSqliteMigrationVersions()).toEqual([1, 2]);
+    expect(listSqliteMigrationVersions()).toEqual([1, 2, 3]);
   });
 
   it('enables SQLite foreign keys outside the migration transaction', async () => {
@@ -44,9 +44,10 @@ describe('SQLite schema migration', () => {
     expect(database.tableNames()).toEqual([
       'chat_drafts', 'chats', 'endpoint_cache', 'message_receipts', 'messages', 'outbox', 'profiles', 'schema_migrations', 'sync_cursors',
     ]);
-    expect(database.indexNames()).toEqual(['idx_chats_last_message_at', 'idx_messages_chat_created_at']);
+    expect(database.indexNames()).toEqual(['idx_chats_last_message_at', 'idx_messages_chat_created_at', 'idx_messages_reply_to_message_id']);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [1])).toEqual([{ version: 1, applied_at: timestamp }]);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [2])).toEqual([{ version: 2, applied_at: timestamp }]);
+    expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [3])).toEqual([{ version: 3, applied_at: timestamp }]);
   });
 
   it('allows unknown message chat IDs until the foreign-key pragma, then rejects them', async () => {
@@ -68,6 +69,7 @@ describe('SQLite schema migration', () => {
     expect(await database.query('SELECT * FROM profiles')).toEqual([{ id: 'p1', display_name: 'Ada', avatar_url: null, updated_at: timestamp }]);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [1])).toHaveLength(1);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [2])).toHaveLength(1);
+    expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [3])).toHaveLength(1);
   });
 
   it('preserves the intentionally minimal v0_user_data fixture while adding version 1 schema', async () => {
@@ -79,5 +81,6 @@ describe('SQLite schema migration', () => {
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [0])).toHaveLength(1);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [1])).toHaveLength(1);
     expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [2])).toHaveLength(1);
+    expect(await database.query('SELECT version FROM schema_migrations WHERE version = ?', [3])).toHaveLength(1);
   });
 });

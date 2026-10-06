@@ -24,6 +24,9 @@ export type StoredMessage = {
   body: string;
   createdAt: string;
   deliveryState: string;
+  replyToMessageId: string | null;
+  replySenderName: string | null;
+  replyPreview: string | null;
   updatedAt: string;
 };
 
@@ -65,7 +68,7 @@ function mapChat(row: Row): StoredChat {
   return { id: row.id as string, title: row.title as string, kind: row.kind as string, lastMessageAt: row.last_message_at as string | null, unreadCount: row.unread_count as number, updatedAt: row.updated_at as string };
 }
 function mapMessage(row: Row): StoredMessage {
-  return { id: row.id as string, chatId: row.chat_id as string, clientMessageId: row.client_message_id as string, senderId: row.sender_id as string, body: row.body as string, createdAt: row.created_at as string, deliveryState: row.delivery_state as string, updatedAt: row.updated_at as string };
+  return { id: row.id as string, chatId: row.chat_id as string, clientMessageId: row.client_message_id as string, senderId: row.sender_id as string, body: row.body as string, createdAt: row.created_at as string, deliveryState: row.delivery_state as string, replyToMessageId: row.reply_to_message_id as string | null, replySenderName: row.reply_sender_name as string | null, replyPreview: row.reply_preview as string | null, updatedAt: row.updated_at as string };
 }
 function mapOutbox(row: Row): OutboxEntry {
   return { clientMessageId: row.client_message_id as string, chatId: row.chat_id as string, payload: row.payload as string, state: row.state as string, attemptCount: row.attempt_count as number, nextAttemptAt: row.next_attempt_at as string | null, createdAt: row.created_at as string, updatedAt: row.updated_at as string };
@@ -88,8 +91,7 @@ export class SqliteRepositories {
   }
 
   async upsertMessage(message: StoredMessage): Promise<void> {
-    await this.database.execute(`INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(client_message_id) DO UPDATE SET chat_id = excluded.chat_id, sender_id = excluded.sender_id, body = excluded.body, created_at = excluded.created_at, delivery_state = excluded.delivery_state, updated_at = excluded.updated_at`, [message.id, message.chatId, message.clientMessageId, message.senderId, message.body, message.createdAt, message.deliveryState, message.updatedAt]);
+    await this.upsertMessageWith(this.database, message);
   }
 
   async insertReceipt(receipt: StoredReceipt): Promise<void> {
@@ -149,6 +151,28 @@ export class SqliteRepositories {
 
   async listMessages(chatId: string): Promise<StoredMessage[]> {
     return (await this.database.query<Row>('SELECT * FROM messages WHERE chat_id = ? ORDER BY created_at ASC, id ASC', [chatId])).map(mapMessage);
+  }
+
+  async deleteMessageForMe(messageId: string): Promise<void> {
+    await this.database.transaction(async (transaction) => {
+      const rows = await transaction.query<Row>('SELECT * FROM messages WHERE id = ? LIMIT 1', [messageId]);
+      const message = rows[0] ? mapMessage(rows[0]) : null;
+      if (!message) return;
+      await transaction.execute('DELETE FROM outbox WHERE client_message_id = ?', [message.clientMessageId]);
+      await transaction.execute('DELETE FROM message_receipts WHERE message_id = ?', [message.id]);
+      await transaction.execute('UPDATE messages SET reply_to_message_id = NULL WHERE reply_to_message_id = ?', [message.id]);
+      await transaction.execute('DELETE FROM messages WHERE id = ?', [message.id]);
+      const latestRows = await transaction.query<{ created_at: string | null }>(
+        'SELECT created_at FROM messages WHERE chat_id = ? ORDER BY created_at DESC, id DESC LIMIT 1',
+        [message.chatId],
+      );
+      const latestMessageAt = latestRows[0]?.created_at ?? null;
+      await transaction.execute('UPDATE chats SET last_message_at = ?, updated_at = ? WHERE id = ?', [
+        latestMessageAt,
+        message.updatedAt,
+        message.chatId,
+      ]);
+    });
   }
 
   async readChatDraft(chatId: string): Promise<StoredChatDraft | null> {
@@ -263,8 +287,8 @@ export class SqliteRepositories {
   }
 
   private async upsertMessageWith(executor: SqlExecutor, message: StoredMessage): Promise<void> {
-    await executor.execute(`INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(client_message_id) DO UPDATE SET chat_id = excluded.chat_id, sender_id = excluded.sender_id, body = excluded.body, created_at = excluded.created_at, delivery_state = excluded.delivery_state, updated_at = excluded.updated_at`, [message.id, message.chatId, message.clientMessageId, message.senderId, message.body, message.createdAt, message.deliveryState, message.updatedAt]);
+    await executor.execute(`INSERT INTO messages(id, chat_id, client_message_id, sender_id, body, created_at, delivery_state, reply_to_message_id, reply_sender_name, reply_preview, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(client_message_id) DO UPDATE SET chat_id = excluded.chat_id, sender_id = excluded.sender_id, body = excluded.body, created_at = excluded.created_at, delivery_state = excluded.delivery_state, reply_to_message_id = excluded.reply_to_message_id, reply_sender_name = excluded.reply_sender_name, reply_preview = excluded.reply_preview, updated_at = excluded.updated_at`, [message.id, message.chatId, message.clientMessageId, message.senderId, message.body, message.createdAt, message.deliveryState, message.replyToMessageId, message.replySenderName, message.replyPreview, message.updatedAt]);
   }
 
   private async enqueueWith(executor: SqlExecutor, outbox: OutboxEntry): Promise<void> {

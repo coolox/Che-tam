@@ -1,10 +1,19 @@
 import { CallLogCallbackType, CallLogEntry, Chat, Message, TabKey } from './types';
 
 const normalize = (value: string) => value.trim().toLocaleLowerCase('ru-RU');
+const REPLY_PREVIEW_LIMIT = 120;
 
 export type ComposerAction = 'mic' | 'send';
 export type LocalDeliveryState = 'queued' | 'sent' | 'not_sent';
 export type ReceiptState = 'none' | 'sent' | 'delivered' | 'read';
+export type ReplyTarget = {
+  messageId: string;
+  senderName: string;
+  preview: string;
+};
+export type MessageActionSheetState =
+  | { visible: false; message: null; confirmDelete: false }
+  | { visible: true; message: Message; confirmDelete: boolean };
 export type MessagePresentation = {
   incomingTail: boolean;
   isCallEvent: boolean;
@@ -129,6 +138,39 @@ export function getComposerState(draft: string): { action: ComposerAction; showC
     showCamera: isEmpty,
     trimmedText,
   };
+}
+
+export function getMessageSenderName(message: Pick<Message, 'sender'>, chat: Pick<Chat, 'name'>): string {
+  if (message.sender === 'me') return 'Вы';
+  if (message.sender === 'relative') return chat.name;
+  return 'Событие';
+}
+
+export function formatReplyPreview(text: string, limit = REPLY_PREVIEW_LIMIT): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= limit) return compact;
+  return `${compact.slice(0, limit - 1)}…`;
+}
+
+export function createReplyTarget(message: Message, chat: Pick<Chat, 'name'>): ReplyTarget {
+  return {
+    messageId: message.id,
+    senderName: getMessageSenderName(message, chat),
+    preview: formatReplyPreview(message.text),
+  };
+}
+
+export function openMessageActionSheet(message: Message): MessageActionSheetState {
+  return { visible: true, message, confirmDelete: false };
+}
+
+export function closeMessageActionSheet(): MessageActionSheetState {
+  return { visible: false, message: null, confirmDelete: false };
+}
+
+export function requestMessageDeleteConfirmation(state: MessageActionSheetState): MessageActionSheetState {
+  if (!state.visible) return state;
+  return { ...state, confirmDelete: true };
 }
 
 export function getMessagePresentation(messages: Message[], message: Message): MessagePresentation {

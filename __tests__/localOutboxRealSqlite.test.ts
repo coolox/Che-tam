@@ -412,6 +412,9 @@ describe('local outbox on real SQLite', () => {
         body: 'Не наше исходящее',
         createdAt: '2026-10-05T10:01:00.000Z',
         deliveryState: 'not_sent',
+        replyToMessageId: null,
+        replySenderName: null,
+        replyPreview: null,
         updatedAt: '2026-10-05T10:01:00.000Z',
       });
 

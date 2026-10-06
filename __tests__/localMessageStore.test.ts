@@ -79,6 +79,67 @@ describe('local message store', () => {
     expect(await store.readComposerDraft('parents')).toBeNull();
   });
 
+  it('persists reply snapshots across reloads even when the original message is deleted locally', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+      developmentSeedEnabled: true,
+      idFactory: () => 'reply-client-message',
+      now: () => new Date('2026-10-03T12:00:00.000Z'),
+      transport: null,
+    });
+    await store.bootstrap();
+    const original = store.getSnapshot().messagesByChat.parents[0];
+
+    await expect(store.sendTextMessage('parents', '  Отвечаю локально  ', {
+      messageId: original.id,
+      senderName: 'Мама и папа',
+      preview: 'Как дети? Получилось подключиться к Wi-Fi?',
+    })).resolves.toEqual({ sent: true, clientMessageId: 'reply-client-message' });
+
+    expect(store.getSnapshot().messagesByChat.parents.at(-1)).toMatchObject({
+      id: 'reply-client-message',
+      replyTo: {
+        messageId: 'parents-1',
+        senderName: 'Мама и папа',
+        preview: 'Как дети? Получилось подключиться к Wi-Fi?',
+      },
+      text: 'Отвечаю локально',
+    });
+
+    await store.bootstrap();
+    expect(store.getSnapshot().messagesByChat.parents.at(-1)?.replyTo).toEqual({
+      messageId: 'parents-1',
+      senderName: 'Мама и папа',
+      preview: 'Как дети? Получилось подключиться к Wi-Fi?',
+    });
+
+    await store.deleteMessageForMe('parents-1');
+    expect(store.getSnapshot().messagesByChat.parents.map(message => message.id)).not.toContain('parents-1');
+    expect(store.getSnapshot().messagesByChat.parents.at(-1)?.replyTo).toEqual({
+      messageId: null,
+      senderName: 'Мама и папа',
+      preview: 'Как дети? Получилось подключиться к Wi-Fi?',
+    });
+  });
+
+  it('deletes a selected message only from local SQLite state and removes its pending outbox row', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+      developmentSeedEnabled: true,
+      idFactory: () => 'delete-local-client-message',
+      now: () => new Date('2026-10-03T12:00:00.000Z'),
+      transport: null,
+    });
+    await store.bootstrap();
+    await store.sendTextMessage('parents', 'Удалить только здесь');
+    expect(await database.query('SELECT client_message_id FROM outbox WHERE client_message_id = ?', ['delete-local-client-message'])).toHaveLength(1);
+
+    await store.deleteMessageForMe('delete-local-client-message');
+
+    expect(store.getSnapshot().messagesByChat.parents.map(message => message.id)).not.toContain('delete-local-client-message');
+    expect(await database.query('SELECT client_message_id FROM outbox WHERE client_message_id = ?', ['delete-local-client-message'])).toEqual([]);
+  });
+
   it('has deterministic Russian loading, empty, and recoverable error strings', async () => {
     expect(LOCAL_LOADING_TEXT).toBe('Загружаем локальные сообщения…');
     expect(EMPTY_CHATS_TEXT).toBe('Здесь появятся ваши чаты');

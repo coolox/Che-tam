@@ -3,7 +3,7 @@ import { migrateDatabase } from '../src/storage/sqlite/migrate';
 import { createSqliteRepositories, type OutboxEntry, type StoredMessage } from '../src/storage/sqlite/repositories';
 
 const now = '2026-10-03T12:00:00.000Z';
-const message: StoredMessage = { id: 'm1', chatId: 'c1', clientMessageId: 'cm1', senderId: 'p1', body: 'private body', createdAt: now, deliveryState: 'queued', updatedAt: now };
+const message: StoredMessage = { id: 'm1', chatId: 'c1', clientMessageId: 'cm1', senderId: 'p1', body: 'private body', createdAt: now, deliveryState: 'queued', replyToMessageId: null, replySenderName: null, replyPreview: null, updatedAt: now };
 const outbox: OutboxEntry = { clientMessageId: 'cm1', chatId: 'c1', payload: '{"kind":"text"}', state: 'queued', attemptCount: 0, nextAttemptAt: null, createdAt: now, updatedAt: now };
 
 async function setup() {

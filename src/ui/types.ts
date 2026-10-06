@@ -28,6 +28,11 @@ export type Message = {
   kind?: 'text' | 'call';
   callStatus?: 'completed' | 'missed';
   read?: boolean;
+  replyTo?: {
+    messageId: string | null;
+    senderName: string;
+    preview: string;
+  };
 };
 
 export type CallLogDirection = 'incoming' | 'outgoing' | 'missed';

@@ -5,21 +5,26 @@ import {
   CheckCheck,
   CircleAlert,
   Clock3,
+  Copy,
   EllipsisVertical,
   Mic,
   Paperclip,
   Phone,
   PhoneMissed,
+  Reply,
   SendHorizontal,
   Smile,
+  Trash2,
   Video,
+  X,
 } from 'lucide-react-native';
 import type { ReactNode } from 'react';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   FlatList,
   Keyboard,
+  Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
@@ -46,20 +51,29 @@ import {
   type LocalDataSnapshot,
 } from '../../messages/localMessageStore';
 import {
+  closeMessageActionSheet,
+  createReplyTarget,
+  formatReplyPreview,
   formatMessageTime,
   getComposerState,
   getConversationDateItems,
   getMessagePresentation,
+  openMessageActionSheet,
+  requestMessageDeleteConfirmation,
+  type MessageActionSheetState,
+  type ReplyTarget,
   type ConversationDateItem,
 } from '../../ui/state';
 import { useTheme } from '../../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../../ui/tokens';
 import type { Chat, Message } from '../../ui/types';
+import { reactNativeClipboardWriter, type ClipboardWriter } from '../clipboard';
 
 type CallMode = 'audio' | 'video';
 
 type ConversationScreenProps = {
   chat: Chat;
+  clipboardWriter?: ClipboardWriter;
   connectionStatusSource?: NetworkAvailabilitySource;
   composer: string;
   dataErrorDiagnostic: LocalDataErrorDiagnostic | null;
@@ -69,7 +83,8 @@ type ConversationScreenProps = {
   messages: Message[];
   onBack: () => void;
   onComposer: (value: string) => void;
-  onSendMessage: () => void;
+  onDeleteMessageForMe: (messageId: string) => void | Promise<void>;
+  onSendMessage: (replyTarget: ReplyTarget | null) => void | boolean | Promise<void | boolean>;
   onStartCall: (mode: CallMode) => void;
   onRetryLocalData: () => void;
   onRetryMessage: (clientMessageId: string) => void;
@@ -77,6 +92,7 @@ type ConversationScreenProps = {
 
 export function ConversationScreen({
   chat,
+  clipboardWriter = reactNativeClipboardWriter,
   connectionStatusSource,
   composer,
   dataErrorDiagnostic,
@@ -86,6 +102,7 @@ export function ConversationScreen({
   messages,
   onBack,
   onComposer,
+  onDeleteMessageForMe,
   onSendMessage,
   onStartCall,
   onRetryLocalData,
@@ -100,6 +117,8 @@ export function ConversationScreen({
   const actionTransition = useRef(new Animated.Value(composerState.action === 'send' ? 1 : 0)).current;
   const listRef = useRef<FlatList<ConversationDateItem>>(null);
   const latestMessage = messages.at(-1) ?? null;
+  const [messageActionSheet, setMessageActionSheet] = useState<MessageActionSheetState>(closeMessageActionSheet());
+  const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const scrollIntentState = useRef<ConversationScrollIntentState>({
     isAtLatest: true,
     latestMessageId: latestMessage?.id ?? null,
@@ -140,6 +159,36 @@ export function ConversationScreen({
       latestMessageSender: latestMessage?.sender ?? null,
     });
   }, [applyScrollIntent, latestMessage?.id, latestMessage?.sender]);
+
+  const closeActions = useCallback(() => setMessageActionSheet(closeMessageActionSheet()), []);
+
+  const handleCopyMessage = useCallback(async () => {
+    if (!messageActionSheet.visible) return;
+    await clipboardWriter.setString(messageActionSheet.message.text);
+    closeActions();
+  }, [clipboardWriter, closeActions, messageActionSheet]);
+
+  const handleReplyMessage = useCallback(() => {
+    if (!messageActionSheet.visible) return;
+    setReplyTarget(createReplyTarget(messageActionSheet.message, chat));
+    closeActions();
+  }, [chat, closeActions, messageActionSheet]);
+
+  const handleConfirmDeleteMessage = useCallback(async () => {
+    if (!messageActionSheet.visible) return;
+    await onDeleteMessageForMe(messageActionSheet.message.id);
+    if (replyTarget?.messageId === messageActionSheet.message.id) {
+      setReplyTarget(null);
+    }
+    closeActions();
+  }, [closeActions, messageActionSheet, onDeleteMessageForMe, replyTarget?.messageId]);
+
+  const handleSendMessage = useCallback(async () => {
+    const result = await onSendMessage(replyTarget);
+    if (result !== false) {
+      setReplyTarget(null);
+    }
+  }, [onSendMessage, replyTarget]);
 
   useEffect(() => {
     const subscription = Keyboard.addListener('keyboardDidShow', () => {
@@ -199,13 +248,25 @@ export function ConversationScreen({
           renderItem={({ item }) => (
             item.itemType === 'dateDivider'
               ? <Text accessibilityLabel={item.label} accessibilityRole="text" style={styles.dateDivider}>{item.label}</Text>
-              : <MessageBubble message={item.message} messages={messages} onRetryMessage={onRetryMessage} />
+              : <MessageBubble message={item.message} messages={messages} onLongPressMessage={(message) => setMessageActionSheet(openMessageActionSheet(message))} onRetryMessage={onRetryMessage} />
           )}
           scrollEventThrottle={32}
           style={styles.messageList}
         />
       </View>
       <View style={styles.composerOverlay}>
+        {replyTarget ? (
+          <View accessibilityLabel={`Ответ на сообщение от ${replyTarget.senderName}`} accessibilityRole="text" style={styles.replyComposerPanel}>
+            <View style={styles.replyQuoteAccent} />
+            <View style={styles.replyComposerText}>
+              <Text numberOfLines={1} style={styles.replySender}>{replyTarget.senderName}</Text>
+              <Text numberOfLines={2} style={styles.replyPreview}>{replyTarget.preview}</Text>
+            </View>
+            <Pressable accessibilityLabel="Убрать ответ" accessibilityRole="button" onPress={() => setReplyTarget(null)} style={styles.replyDismissButton}>
+              <X color={colors.textMuted} size={20} />
+            </Pressable>
+          </View>
+        ) : null}
         <View style={styles.composerCapsule}>
           <ComposerIconButton accessibilityLabel="Смайлы" icon={<Smile color={colors.textMuted} size={22} />} />
           <TextInput
@@ -224,7 +285,7 @@ export function ConversationScreen({
         <Pressable
           accessibilityLabel={composerState.action === 'send' ? 'Отправить сообщение' : 'Голосовое сообщение'}
           accessibilityRole="button"
-          onPress={composerState.action === 'send' ? onSendMessage : undefined}
+          onPress={composerState.action === 'send' ? () => void handleSendMessage() : undefined}
           style={styles.composerAction}
         >
           <Animated.View
@@ -251,6 +312,14 @@ export function ConversationScreen({
           </Animated.View>
         </Pressable>
       </View>
+      <MessageActionMenu
+        onCancel={closeActions}
+        onConfirmDelete={() => void handleConfirmDeleteMessage()}
+        onCopy={() => void handleCopyMessage()}
+        onDelete={() => setMessageActionSheet(current => requestMessageDeleteConfirmation(current))}
+        onReply={handleReplyMessage}
+        state={messageActionSheet}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -280,7 +349,17 @@ function ComposerIconButton({ accessibilityLabel, icon }: { accessibilityLabel: 
   );
 }
 
-function MessageBubble({ message, messages, onRetryMessage }: { message: Message; messages: Message[]; onRetryMessage: (clientMessageId: string) => void }) {
+function MessageBubble({
+  message,
+  messages,
+  onLongPressMessage,
+  onRetryMessage,
+}: {
+  message: Message;
+  messages: Message[];
+  onLongPressMessage: (message: Message) => void;
+  onRetryMessage: (clientMessageId: string) => void;
+}) {
   const { colors } = useTheme();
   const styles = useStyles();
   const presentation = getMessagePresentation(messages, message);
@@ -295,20 +374,98 @@ function MessageBubble({ message, messages, onRetryMessage }: { message: Message
   }
 
   return (
-    <View
+    <Pressable
+      accessibilityLabel={message.sender === 'me' ? 'Ваше сообщение' : 'Сообщение собеседника'}
+      accessibilityRole="button"
+      onLongPress={() => onLongPressMessage(message)}
       style={[
         styles.messageBubble,
         message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
         presentation.incomingTail && styles.incomingBubbleTail,
       ]}
     >
+      {message.replyTo ? <MessageQuote senderName={message.replyTo.senderName} preview={message.replyTo.preview} /> : null}
       <Text style={styles.messageText}>{message.text}</Text>
       <View style={styles.messageMetaRow}>
         <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
         <LocalDeliveryControl message={message} state={presentation.localDeliveryState} onRetryMessage={onRetryMessage} />
         <ReceiptIcon state={presentation.receipt} />
       </View>
+    </Pressable>
+  );
+}
+
+function MessageQuote({ senderName, preview }: { senderName: string; preview: string }) {
+  const styles = useStyles();
+  return (
+    <View accessibilityLabel={`Цитата от ${senderName}: ${preview}`} accessibilityRole="text" style={styles.messageQuote}>
+      <View style={styles.messageQuoteAccent} />
+      <View style={styles.messageQuoteText}>
+        <Text numberOfLines={1} style={styles.messageQuoteSender}>{senderName}</Text>
+        <Text numberOfLines={2} style={styles.messageQuotePreview}>{formatReplyPreview(preview, 90)}</Text>
+      </View>
     </View>
+  );
+}
+
+function MessageActionMenu({
+  onCancel,
+  onConfirmDelete,
+  onCopy,
+  onDelete,
+  onReply,
+  state,
+}: {
+  onCancel: () => void;
+  onConfirmDelete: () => void;
+  onCopy: () => void;
+  onDelete: () => void;
+  onReply: () => void;
+  state: MessageActionSheetState;
+}) {
+  const { colors } = useTheme();
+  const styles = useStyles();
+  return (
+    <Modal animationType="fade" onRequestClose={onCancel} transparent visible={state.visible}>
+      <Pressable accessibilityLabel="Закрыть действия сообщения" accessibilityRole="button" onPress={onCancel} style={styles.actionBackdrop}>
+        <Pressable accessibilityLabel="Действия сообщения" accessibilityRole="menu" onPress={(event) => event.stopPropagation()} style={styles.actionSheet}>
+          {state.visible && state.confirmDelete ? (
+            <>
+              <Text accessibilityRole="header" style={styles.actionTitle}>Удалить сообщение у себя?</Text>
+              <Text style={styles.actionText}>Сообщение исчезнет только на этом устройстве.</Text>
+              <View style={styles.actionRow}>
+                <Pressable accessibilityLabel="Отменить удаление" accessibilityRole="button" onPress={onCancel} style={styles.actionSecondaryButton}>
+                  <Text style={styles.actionSecondaryText}>Отмена</Text>
+                </Pressable>
+                <Pressable accessibilityLabel="Удалить сообщение у себя" accessibilityRole="button" onPress={onConfirmDelete} style={styles.actionDangerButton}>
+                  <Trash2 color={colors.surface} size={18} />
+                  <Text style={styles.actionDangerText}>Удалить</Text>
+                </Pressable>
+              </View>
+            </>
+          ) : (
+            <>
+              <ActionMenuButton icon={<Reply color={colors.accent} size={19} />} label="Ответить" onPress={onReply} />
+              <ActionMenuButton icon={<Copy color={colors.accent} size={19} />} label="Копировать" onPress={onCopy} />
+              <ActionMenuButton danger icon={<Trash2 color={colors.danger} size={19} />} label="Удалить у себя" onPress={onDelete} />
+              <Pressable accessibilityLabel="Отмена" accessibilityRole="button" onPress={onCancel} style={styles.actionCancelButton}>
+                <Text style={styles.actionCancelText}>Отмена</Text>
+              </Pressable>
+            </>
+          )}
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function ActionMenuButton({ danger = false, icon, label, onPress }: { danger?: boolean; icon: ReactNode; label: string; onPress: () => void }) {
+  const styles = useStyles();
+  return (
+    <Pressable accessibilityLabel={label} accessibilityRole="menuitem" onPress={onPress} style={styles.actionMenuButton}>
+      {icon}
+      <Text style={[styles.actionMenuText, danger && styles.actionMenuDangerText]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -489,11 +646,29 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   composerOverlay: {
     alignItems: 'flex-end',
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 7,
     paddingBottom: insets.bottom + 7,
     paddingHorizontal: 7,
     paddingTop: 7,
   },
+  replyComposerPanel: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexBasis: '100%',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    minHeight: 54,
+    padding: spacing.sm,
+  },
+  replyQuoteAccent: { alignSelf: 'stretch', backgroundColor: colors.accent, borderRadius: radius.full, width: 3 },
+  replyComposerText: { flex: 1, minWidth: 0 },
+  replySender: { color: colors.accent, fontSize: typography.sm, fontWeight: '800' },
+  replyPreview: { color: colors.textSecondary, fontSize: typography.sm, lineHeight: 18 },
+  replyDismissButton: { alignItems: 'center', borderRadius: radius.full, height: 36, justifyContent: 'center', width: 36 },
   composerCapsule: {
     alignItems: 'flex-end',
     backgroundColor: colors.surface,
@@ -520,5 +695,44 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   composerAction: { alignItems: 'center', backgroundColor: colors.accent, borderRadius: radius.full, height: 48, justifyContent: 'center', width: 48 },
   composerActionIcon: { position: 'absolute' },
+  messageQuote: {
+    backgroundColor: 'rgba(255, 255, 255, 0.48)',
+    borderRadius: radius.sm,
+    flexDirection: 'row',
+    gap: 7,
+    marginBottom: 6,
+    minWidth: 0,
+    padding: 7,
+  },
+  messageQuoteAccent: { alignSelf: 'stretch', backgroundColor: colors.accent, borderRadius: radius.full, width: 3 },
+  messageQuoteText: { flex: 1, minWidth: 0 },
+  messageQuoteSender: { color: colors.accentDark, fontSize: typography.xs, fontWeight: '800' },
+  messageQuotePreview: { color: colors.textSecondary, fontSize: typography.xs, lineHeight: 16 },
+  actionBackdrop: {
+    backgroundColor: 'rgba(15, 23, 42, 0.42)',
+    flex: 1,
+    justifyContent: 'flex-end',
+    padding: spacing.md,
+  },
+  actionSheet: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    gap: spacing.xs,
+    padding: spacing.sm,
+  },
+  actionMenuButton: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.sm },
+  actionMenuText: { color: colors.text, fontSize: typography.md, fontWeight: '800' },
+  actionMenuDangerText: { color: colors.danger },
+  actionCancelButton: { alignItems: 'center', borderTopColor: colors.border, borderTopWidth: 1, minHeight: 48, justifyContent: 'center', marginTop: spacing.xs },
+  actionCancelText: { color: colors.textSecondary, fontSize: typography.md, fontWeight: '800' },
+  actionTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800', paddingHorizontal: spacing.sm, paddingTop: spacing.xs },
+  actionText: { color: colors.textSecondary, fontSize: typography.sm, lineHeight: 19, paddingHorizontal: spacing.sm },
+  actionRow: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm },
+  actionSecondaryButton: { alignItems: 'center', borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 48 },
+  actionSecondaryText: { color: colors.text, fontSize: typography.md, fontWeight: '800' },
+  actionDangerButton: { alignItems: 'center', backgroundColor: colors.danger, borderRadius: radius.md, flex: 1, flexDirection: 'row', gap: spacing.xs, justifyContent: 'center', minHeight: 48 },
+  actionDangerText: { color: colors.surface, fontSize: typography.md, fontWeight: '800' },
   localOnlyComposerNote: { color: colors.textMuted, fontSize: 11, paddingBottom: 4, paddingHorizontal: spacing.md, textAlign: 'center' },
 });
