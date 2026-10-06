@@ -6,8 +6,8 @@ import { netInfoSource } from '../hooks/useConnectionStatus';
 import { createLocalMessageStore, LOCAL_LOADING_TEXT, type LocalDataSnapshot } from '../messages/localMessageStore';
 import { getLocalTestModeConfig } from '../messages/localTestMode';
 import { createDebugLocalAckTransportAvailabilitySource } from '../messages/localOutbox';
-import { createAsyncPhoneVerificationPreference, type PhoneVerificationPreference } from '../phoneVerification/preferences';
-import { initialPhoneVerificationState, LOCAL_TEST_CODE, normalizeRussianPhone, phoneVerificationReducer, type PhoneVerificationState } from '../phoneVerification/reducer';
+import { createAsyncInvitationAdmissionPreference, type InvitationAdmissionPreference } from '../invitationGate/preferences';
+import { initialInvitationGateState, invitationGateReducer, isInvitationGateSubmitDisabled, LOCAL_TEST_INVITE_CODE, type InvitationGateState } from '../invitationGate/reducer';
 import { ThemeProvider, useTheme } from '../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../ui/tokens';
 import PreviewAppShell from './PreviewAppShell';
@@ -19,126 +19,103 @@ const store = createLocalMessageStore(createExpoSqliteDatabaseFactory(), 'che-ta
   networkAvailabilitySource: netInfoSource,
 });
 
-export const PHONE_SETUP_RETRY_TEXT = 'Попробовать ещё раз';
-export const PHONE_SETUP_PHONE_INPUT_PROPS = {
-  accessibilityLabel: 'Номер телефона',
-  keyboardType: 'phone-pad',
-  placeholder: '+993 …',
+export const INVITATION_GATE_RETRY_TEXT = 'Попробовать ещё раз';
+export const INVITATION_GATE_CODE_INPUT_PROPS = {
+  accessibilityLabel: 'Код приглашения',
+  autoCapitalize: 'characters',
+  placeholder: 'Код приглашения',
 } as const;
-export const PHONE_SETUP_CODE_INPUT_PROPS = {
-  accessibilityLabel: 'Код подтверждения',
-  keyboardType: 'number-pad',
-  maxLength: 6,
-  placeholder: '000000',
+export const INVITATION_GATE_NAME_INPUT_PROPS = {
+  accessibilityLabel: 'Как вас зовут',
+  autoCapitalize: 'words',
+  placeholder: 'Как вас зовут',
 } as const;
 
-export type PhoneSetupViewModel = {
-  codeError: string | null;
-  codeInputVisible: boolean;
-  phoneError: string | null;
-  phoneInputVisible: boolean;
+export type InvitationGateViewModel = {
+  error: string | null;
+  localTestHint: string | null;
+  normalModeExplanation: string;
   primaryDisabled: boolean;
   retryVisible: boolean;
 };
 
-export function getPhoneSetupViewModel(state: PhoneVerificationState): PhoneSetupViewModel {
-  if (state.status === 'phone') {
-    const inlinePhoneError = state.phone.length > 0 && normalizeRussianPhone(state.phone) === null
-      ? 'Введите номер телефона: от 10 до 15 цифр.'
-      : null;
-    return {
-      codeError: null,
-      codeInputVisible: false,
-      phoneError: state.error ?? inlinePhoneError,
-      phoneInputVisible: true,
-      primaryDisabled: normalizeRussianPhone(state.phone) === null,
-      retryVisible: Boolean(state.error),
-    };
-  }
-  if (state.status === 'code') {
-    return {
-      codeError: state.error,
-      codeInputVisible: true,
-      phoneError: null,
-      phoneInputVisible: false,
-      primaryDisabled: state.code.length !== 6,
-      retryVisible: Boolean(state.error),
-    };
-  }
+export function getInvitationGateViewModel(state: InvitationGateState, localTestModeEnabled: boolean): InvitationGateViewModel {
   return {
-    codeError: null,
-    codeInputVisible: false,
-    phoneError: null,
-    phoneInputVisible: false,
-    primaryDisabled: true,
-    retryVisible: false,
+    error: state.error,
+    localTestHint: localTestModeEnabled ? `Локальный тестовый код: ${LOCAL_TEST_INVITE_CODE}` : null,
+    normalModeExplanation: 'Код приглашения выдаёт Арслан лично. В локальной версии нет серверной проверки.',
+    primaryDisabled: isInvitationGateSubmitDisabled(state),
+    retryVisible: Boolean(state.error),
   };
 }
 
-function PhoneVerificationGate({ preference, onComplete }: { preference: PhoneVerificationPreference; onComplete: () => void }) {
-  const [state, dispatch] = useReducer(phoneVerificationReducer, initialPhoneVerificationState);
+export function InvitationGate({
+  localTestModeEnabled,
+  preference,
+  onComplete,
+}: {
+  localTestModeEnabled: boolean;
+  preference: InvitationAdmissionPreference;
+  onComplete: (displayName: string) => void;
+}) {
+  const [state, dispatch] = useReducer(invitationGateReducer, initialInvitationGateState);
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
-  const styles = createPhoneStyles(colors, insets.top);
-  const viewModel = getPhoneSetupViewModel(state);
+  const styles = createInvitationGateStyles(colors, insets.top);
+  const viewModel = getInvitationGateViewModel(state, localTestModeEnabled);
   const submit = async () => {
     if (viewModel.primaryDisabled) return;
-    if (state.status === 'phone') { dispatch({ type: 'requestCode' }); return; }
-    if (state.status === 'code') {
-      if (state.code !== LOCAL_TEST_CODE) { dispatch({ type: 'submitCode' }); return; }
-      dispatch({ type: 'submitCode' });
-      await preference.setComplete();
-      onComplete();
+    const nextState = invitationGateReducer(state, { type: 'submit', localTestModeEnabled });
+    dispatch({ type: 'submit', localTestModeEnabled });
+    if (nextState.status === 'complete') {
+      await preference.setAdmitted(nextState.displayName);
+      onComplete(nextState.displayName);
     }
   };
   return (
-    <View accessibilityLabel="Локальная проверка телефона" style={styles.screen}>
+    <View accessibilityLabel="Вход по приглашению" style={styles.screen}>
       <View style={styles.panel}>
-        <Text style={styles.title}>Локальная настройка телефона</Text>
-        <Text style={styles.body}>Это локальный шаг настройки: SMS и проверка на сервере не выполняются.</Text>
-        {viewModel.phoneInputVisible ? (
-          <View style={styles.field}>
-            <TextInput
-              accessibilityLabel={PHONE_SETUP_PHONE_INPUT_PROPS.accessibilityLabel}
-              keyboardType={PHONE_SETUP_PHONE_INPUT_PROPS.keyboardType}
-              onChangeText={(phone) => dispatch({ type: 'phoneChanged', phone })}
-              placeholder={PHONE_SETUP_PHONE_INPUT_PROPS.placeholder}
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-              value={state.phone}
-            />
-            {viewModel.phoneError ? <Text accessibilityLabel={`Ошибка номера телефона: ${viewModel.phoneError}`} style={styles.error}>{viewModel.phoneError}</Text> : null}
-          </View>
-        ) : null}
-        {viewModel.codeInputVisible && state.status === 'code' ? (
-          <View style={styles.field}>
-            <Text style={styles.body}>Локальный тестовый код: 000000</Text>
-            <TextInput
-              accessibilityLabel={PHONE_SETUP_CODE_INPUT_PROPS.accessibilityLabel}
-              keyboardType={PHONE_SETUP_CODE_INPUT_PROPS.keyboardType}
-              maxLength={PHONE_SETUP_CODE_INPUT_PROPS.maxLength}
-              onChangeText={(code) => dispatch({ type: 'codeChanged', code })}
-              placeholder={PHONE_SETUP_CODE_INPUT_PROPS.placeholder}
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-              value={state.code}
-            />
-            {viewModel.codeError ? <Text accessibilityLabel={`Ошибка кода подтверждения: ${viewModel.codeError}`} style={styles.error}>{viewModel.codeError}</Text> : null}
-          </View>
-        ) : null}
+        <Text style={styles.title}>Вход по приглашению</Text>
+        <Text style={styles.body}>{viewModel.normalModeExplanation}</Text>
+        {viewModel.localTestHint ? <Text style={styles.body}>{viewModel.localTestHint}</Text> : null}
+        <View style={styles.field}>
+          <Text style={styles.label}>Код приглашения</Text>
+          <TextInput
+            accessibilityLabel={INVITATION_GATE_CODE_INPUT_PROPS.accessibilityLabel}
+            autoCapitalize={INVITATION_GATE_CODE_INPUT_PROPS.autoCapitalize}
+            onChangeText={(inviteCode) => dispatch({ type: 'inviteCodeChanged', inviteCode })}
+            placeholder={INVITATION_GATE_CODE_INPUT_PROPS.placeholder}
+            placeholderTextColor={colors.textMuted}
+            style={styles.input}
+            value={state.status === 'editing' ? state.inviteCode : ''}
+          />
+        </View>
+        <View style={styles.field}>
+          <Text style={styles.label}>Как вас зовут</Text>
+          <TextInput
+            accessibilityLabel={INVITATION_GATE_NAME_INPUT_PROPS.accessibilityLabel}
+            autoCapitalize={INVITATION_GATE_NAME_INPUT_PROPS.autoCapitalize}
+            onChangeText={(displayName) => dispatch({ type: 'displayNameChanged', displayName })}
+            placeholder={INVITATION_GATE_NAME_INPUT_PROPS.placeholder}
+            placeholderTextColor={colors.textMuted}
+            style={styles.input}
+            value={state.displayName}
+          />
+        </View>
+        {viewModel.error ? <Text accessibilityLabel={`Ошибка приглашения: ${viewModel.error}`} style={styles.error}>{viewModel.error}</Text> : null}
         <Pressable
-          accessibilityLabel={state.status === 'phone' ? 'Запросить локальный код' : 'Подтвердить локальный код'}
+          accessibilityLabel="Продолжить"
           accessibilityRole="button"
           accessibilityState={{ disabled: viewModel.primaryDisabled }}
           disabled={viewModel.primaryDisabled}
           onPress={submit}
           style={[styles.primaryButton, viewModel.primaryDisabled && styles.primaryButtonDisabled]}
         >
-          <Text style={styles.primaryButtonText}>{state.status === 'phone' ? 'Получить локальный код' : 'Подтвердить'}</Text>
+          <Text style={styles.primaryButtonText}>Продолжить</Text>
         </Pressable>
         {viewModel.retryVisible ? (
           <Pressable accessibilityRole="button" accessibilityLabel="Повторить ввод" onPress={() => dispatch({ type: 'retry' })} style={styles.secondaryButton}>
-            <Text style={styles.secondaryButtonText}>{PHONE_SETUP_RETRY_TEXT}</Text>
+            <Text style={styles.secondaryButtonText}>{INVITATION_GATE_RETRY_TEXT}</Text>
           </Pressable>
         ) : null}
       </View>
@@ -148,18 +125,18 @@ function PhoneVerificationGate({ preference, onComplete }: { preference: PhoneVe
 
 
 export function AppShell() {
-  const [verified, setVerified] = useState<boolean | null>(null);
+  const [admitted, setAdmitted] = useState<boolean | null>(null);
   const [snapshot, setSnapshot] = useState<LocalDataSnapshot>(store.getSnapshot());
 
-  const [preference] = useState(createAsyncPhoneVerificationPreference);
-  useEffect(() => { void preference.getComplete().then(setVerified).catch(() => setVerified(false)); }, [preference]);
+  const [preference] = useState(createAsyncInvitationAdmissionPreference);
+  useEffect(() => { void preference.getAdmission().then((admission) => setAdmitted(admission.admitted)).catch(() => setAdmitted(false)); }, [preference]);
   useEffect(() => { const unsubscribe = store.subscribe(() => setSnapshot(store.getSnapshot())); void store.bootstrap(); return unsubscribe; }, []);
-  if (verified === null) return <Text>{LOCAL_LOADING_TEXT}</Text>;
-  if (!verified) return <SafeAreaProvider><ThemeProvider><PhoneVerificationGate preference={preference} onComplete={() => setVerified(true)} /></ThemeProvider></SafeAreaProvider>;
+  if (admitted === null) return <Text>{LOCAL_LOADING_TEXT}</Text>;
+  if (!admitted) return <SafeAreaProvider><ThemeProvider><InvitationGate localTestModeEnabled={localTestMode.enabled} preference={preference} onComplete={() => setAdmitted(true)} /></ThemeProvider></SafeAreaProvider>;
   return <PreviewAppShell connectionStatusSource={connectionStatusSource} isLocalTestModeEnabled={localTestMode.enabled} snapshot={snapshot} onClearComposerDraft={(chatId) => store.clearComposerDraft(chatId)} onClearUnread={(chatId) => store.clearUnread(chatId)} onReadComposerDraft={(chatId) => store.readComposerDraft(chatId)} onRetry={() => store.bootstrap()} onRetryMessage={(clientMessageId) => store.retryTextMessage(clientMessageId)} onSaveComposerDraft={(chatId, draft) => store.saveComposerDraft(chatId, draft)} onSendMessage={(chatId, draft) => store.sendTextMessage(chatId, draft)} />;
 }
 
-const createPhoneStyles = (colors: ThemeColors, topInset: number) => StyleSheet.create({
+const createInvitationGateStyles = (colors: ThemeColors, topInset: number) => StyleSheet.create({
   screen: {
     backgroundColor: colors.background,
     flex: 1,
@@ -170,6 +147,7 @@ const createPhoneStyles = (colors: ThemeColors, topInset: number) => StyleSheet.
   panel: { gap: spacing.md },
   title: { color: colors.text, fontSize: 32, fontWeight: '800' },
   body: { color: colors.textSecondary, fontSize: typography.md, lineHeight: 23 },
+  label: { color: colors.text, fontSize: typography.sm, fontWeight: '800' },
   field: { gap: spacing.xs },
   input: {
     borderColor: colors.border,
