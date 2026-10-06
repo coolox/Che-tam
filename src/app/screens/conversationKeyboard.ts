@@ -9,12 +9,16 @@ export const CONVERSATION_KEYBOARD_AVOIDING_PROPS = {
 
 export type ConversationScrollIntentState = {
   isAtLatest: boolean;
+  isKeyboardOpen: boolean;
   latestMessageId: string | null;
+  pendingScrollAfterLayout: boolean;
 };
 
 export type ConversationScrollIntentEvent =
   | { type: 'enter' }
+  | { type: 'keyboardClosed' }
   | { type: 'keyboardOpened' }
+  | { type: 'layoutSettled' }
   | { type: 'messagesChanged'; latestMessageId: string | null; latestMessageSender: Message['sender'] | null }
   | { type: 'scrolled'; offsetY: number };
 
@@ -27,7 +31,21 @@ export function reduceConversationScrollIntent(
   }
 
   if (event.type === 'keyboardOpened') {
-    return { state, scrollToLatest: state.isAtLatest };
+    return {
+      state: { ...state, isKeyboardOpen: true, pendingScrollAfterLayout: state.isAtLatest },
+      scrollToLatest: false,
+    };
+  }
+
+  if (event.type === 'keyboardClosed') {
+    return { state: { ...state, isKeyboardOpen: false, pendingScrollAfterLayout: false }, scrollToLatest: false };
+  }
+
+  if (event.type === 'layoutSettled') {
+    return {
+      state: { ...state, pendingScrollAfterLayout: false },
+      scrollToLatest: state.pendingScrollAfterLayout,
+    };
   }
 
   if (event.type === 'scrolled') {
@@ -43,7 +61,10 @@ export function reduceConversationScrollIntent(
 
   const nextState = { ...state, latestMessageId: event.latestMessageId };
   if (event.latestMessageSender === 'me') {
-    return { state: { ...nextState, isAtLatest: true }, scrollToLatest: true };
+    return {
+      state: { ...nextState, isAtLatest: true, pendingScrollAfterLayout: state.isKeyboardOpen },
+      scrollToLatest: !state.isKeyboardOpen,
+    };
   }
 
   return { state: nextState, scrollToLatest: state.isAtLatest };

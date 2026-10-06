@@ -29,6 +29,8 @@ import {
   getCallLogDisplayModel,
   getCallbackCallMode,
   getComposerState,
+  getDeliveryIndicatorPresentation,
+  getDeliveryIndicatorState,
   getMessagePresentation,
   getMissedCallCount,
   getOrderedChats,
@@ -192,7 +194,7 @@ describe('UI Preview local behavior', () => {
     expect(getMessagePresentation(messages, deliveredMessage)).toMatchObject({ receipt: 'delivered' });
   });
 
-  it('uses APP-014L local delivery states without deriving delivered/read receipts', () => {
+  it('uses a single local delivery indicator without deriving delivered/read receipts', () => {
     const queuedMessage = {
       id: 'local-queued',
       chatId: 'parents',
@@ -208,9 +210,19 @@ describe('UI Preview local behavior', () => {
     const notSentMessage = { ...queuedMessage, id: 'local-not-sent', clientMessageId: 'cm-local-not-sent', deliveryState: 'not_sent' as const };
     const sentMessage = { ...queuedMessage, id: 'local-sent', clientMessageId: 'cm-local-sent', deliveryState: 'sent' as const };
 
-    expect(getMessagePresentation([queuedMessage], queuedMessage)).toMatchObject({ localDeliveryState: 'queued', receipt: 'none' });
-    expect(getMessagePresentation([notSentMessage], notSentMessage)).toMatchObject({ localDeliveryState: 'not_sent', receipt: 'none' });
+    expect(getDeliveryIndicatorState(getMessagePresentation([queuedMessage], queuedMessage))).toBe('queued');
+    expect(getDeliveryIndicatorState(getMessagePresentation([notSentMessage], notSentMessage))).toBe('not_sent');
+    expect(getDeliveryIndicatorState(getMessagePresentation([sentMessage], sentMessage))).toBe('sent');
     expect(getMessagePresentation([sentMessage], sentMessage)).toMatchObject({ localDeliveryState: 'sent', receipt: 'sent' });
+  });
+
+  it('maps every delivery indicator state to exactly one existing icon slot', () => {
+    expect(getDeliveryIndicatorPresentation('queued')).toEqual({ icon: 'clock', iconCount: 1, accent: false });
+    expect(getDeliveryIndicatorPresentation('sent')).toEqual({ icon: 'check', iconCount: 1, accent: false });
+    expect(getDeliveryIndicatorPresentation('delivered')).toEqual({ icon: 'checkCheck', iconCount: 1, accent: false });
+    expect(getDeliveryIndicatorPresentation('read')).toEqual({ icon: 'checkCheck', iconCount: 1, accent: true });
+    expect(getDeliveryIndicatorPresentation('not_sent')).toEqual({ icon: 'alert', iconCount: 1, accent: false });
+    expect(getDeliveryIndicatorPresentation('none')).toEqual({ icon: 'none', iconCount: 0, accent: false });
   });
 
   it('wires Russian accessibility labels directly on local status controls', () => {
@@ -218,9 +230,13 @@ describe('UI Preview local behavior', () => {
 
     expect(source).toContain('accessibilityLabel="В очереди"');
     expect(source).toContain('accessibilityLabel="Отправлено"');
+    expect(source).toContain("accessibilityLabel={state === 'read' ? 'Прочитано' : 'Доставлено'}");
     expect(source).toContain('accessibilityLabel="Не отправлено"');
     expect(source).toContain('accessibilityLabel="Повторить отправку"');
     expect(source).toContain('>Повторить<');
+    expect(source).toContain('<DeliveryIndicator message={message} onRetryMessage={onRetryMessage} state={getDeliveryIndicatorState(presentation)} />');
+    expect(source).not.toContain('<ReceiptIcon');
+    expect(source).not.toContain('<LocalDeliveryControl');
   });
 
   it('selects bottom tab state locally', () => {

@@ -1,7 +1,7 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const fs = require('fs') as { readFileSync(path: string, encoding: string): string };
 
-import { getConversationDateItems } from '../src/ui/state';
+import { formatMessageTime, getConversationDateItems } from '../src/ui/state';
 import type { Message } from '../src/ui/types';
 
 function message(id: string, createdAt: string): Message {
@@ -17,6 +17,28 @@ function message(id: string, createdAt: string): Message {
 }
 
 describe('conversation local date separators', () => {
+  it('formats bubble and separator with the same local civil timezone in Istanbul', () => {
+    const instantSeenAt1108 = '2026-10-05T08:08:00.000Z';
+    const timeZone = 'Europe/Istanbul';
+
+    expect(formatMessageTime(instantSeenAt1108, { timeZone })).toBe('11:08');
+    expect(getConversationDateItems([message('istanbul', instantSeenAt1108)], {
+      now: new Date('2026-10-05T09:00:00.000Z'),
+      timeZone,
+    })[0]).toMatchObject({ itemType: 'dateDivider', label: 'Сегодня' });
+  });
+
+  it('formats bubble and separator with the same local civil timezone in Ashgabat', () => {
+    const instantSeenAt1108 = '2026-10-05T06:08:00.000Z';
+    const timeZone = 'Asia/Ashgabat';
+
+    expect(formatMessageTime(instantSeenAt1108, { timeZone })).toBe('11:08');
+    expect(getConversationDateItems([message('ashgabat', instantSeenAt1108)], {
+      now: new Date('2026-10-05T07:00:00.000Z'),
+      timeZone,
+    })[0]).toMatchObject({ itemType: 'dateDivider', label: 'Сегодня' });
+  });
+
   it('classifies today and yesterday by injected local time zone, not UTC calendar date', () => {
     const items = getConversationDateItems(
       [

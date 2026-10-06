@@ -6,7 +6,7 @@ import type { SqlDatabaseFactory } from '../storage/sqlite/contracts';
 import { subscribeToNetworkAvailability, type NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { createDebugLocalAckTransport, createLocalOutboxWorker, type LocalOutboxTransport, type LocalOutboxWorker } from './localOutbox';
 import { getLocalTestModeConfig, type LocalTestModeConfig } from './localTestMode';
-import type { ReplyTarget } from '../ui/state';
+import { formatLocalCivilTime, type ReplyTarget } from '../ui/state';
 
 export const LOCAL_DATA_ERROR_TEXT = 'Не удалось открыть локальные данные. Попробуйте ещё раз.';
 export const LOCAL_LOADING_TEXT = 'Загружаем локальные сообщения…';
@@ -110,7 +110,7 @@ function avatarColor(id: string): string {
 }
 
 function messageToViewModel(message: StoredMessage): Message {
-  const localDeliveryState = message.deliveryState === 'queued' || message.deliveryState === 'sent' || message.deliveryState === 'not_sent'
+  const localDeliveryState = message.deliveryState === 'queued' || message.deliveryState === 'sent' || message.deliveryState === 'delivered' || message.deliveryState === 'read' || message.deliveryState === 'not_sent'
     ? message.deliveryState
     : undefined;
   return {
@@ -133,7 +133,7 @@ function messageToViewModel(message: StoredMessage): Message {
 }
 
 export function formatChatListTime(timestamp: string, options: Intl.DateTimeFormatOptions = {}): string {
-  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', ...options }).format(new Date(timestamp));
+  return formatLocalCivilTime(timestamp, options);
 }
 
 function chatToViewModel(chat: StoredChat, lastMessage: string): Chat {

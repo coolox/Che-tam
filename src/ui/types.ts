@@ -24,7 +24,7 @@ export type Message = {
   text: string;
   createdAt: string;
   delivered: boolean;
-  deliveryState?: 'queued' | 'sent' | 'not_sent';
+  deliveryState?: 'queued' | 'sent' | 'delivered' | 'read' | 'not_sent';
   kind?: 'text' | 'call';
   callStatus?: 'completed' | 'missed';
   read?: boolean;

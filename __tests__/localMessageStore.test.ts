@@ -1,6 +1,7 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
 import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, formatLocalDataError, formatLocalDataErrorDiagnostic, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
 import { createDebugLocalAckTransportAvailabilitySource } from '../src/messages/localOutbox';
+import { formatMessageTime, getConversationDateItems } from '../src/ui/state';
 
 describe('local message store', () => {
   it('formats chat-list times in the selected device time zone', () => {
@@ -11,6 +12,29 @@ describe('local message store', () => {
     expect(istanbul).toBe('15:00');
     expect(ashgabat).toBe('17:00');
     expect(istanbul).not.toBe(ashgabat);
+  });
+
+  it('uses one stored instant for bubble, chat preview, and date separator local time', async () => {
+    const database = new InMemorySqliteDatabase();
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+      developmentSeedEnabled: true,
+      idFactory: () => 'local-time-client-message',
+      now: () => new Date('2026-10-05T08:08:00.000Z'),
+      transport: null,
+    });
+    await store.bootstrap();
+    await store.sendTextMessage('parents', 'Локальное время');
+
+    const sent = store.getSnapshot().messagesByChat.parents.at(-1);
+    const chatPreviewInstant = sent?.createdAt ?? '';
+    expect(sent?.createdAt).toBe('2026-10-05T08:08:00.000Z');
+    expect(store.getSnapshot().chats.find(chat => chat.id === 'parents')).toMatchObject({ lastMessage: 'Локальное время' });
+    expect(formatMessageTime(chatPreviewInstant, { timeZone: 'Europe/Istanbul' })).toBe('11:08');
+    expect(formatChatListTime(chatPreviewInstant, { timeZone: 'Europe/Istanbul' })).toBe('11:08');
+    expect(getConversationDateItems([sent as NonNullable<typeof sent>], {
+      now: new Date('2026-10-05T09:00:00.000Z'),
+      timeZone: 'Europe/Istanbul',
+    })[0]).toMatchObject({ itemType: 'dateDivider', label: 'Сегодня' });
   });
 
   it('migrates, seeds only once, and reads chats/messages from repositories', async () => {

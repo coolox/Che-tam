@@ -29,6 +29,12 @@ ADR-001 определяет Android-доставку: в нормальном �
 - **APP-014L-06 — local test-mode build:** только точный build-флаг `EXPO_PUBLIC_LOCAL_TEST_MODE=1` включает demo seed и локальный fake ack transport; без флага release остаётся без них. В Settings тестовой сборки видна надпись «Тестовая сборка». Такие APK предназначены только для внутренней проверки, не для родственников.
 - **APP-014L-07 — persistent composer drafts:** SQLite-черновик на chat ID переживает выход из чата и restart, очищается только после успешного enqueue отправки; тесты используют настоящую SQLite там, где доступна база.
 - **APP-014L-08 — local date separators:** в локальной переписке показываются «Сегодня», «Вчера» либо русская дата по local civil time; timezone boundary и порядок разделителей покрыты тестами.
+- **APP-014L-14 — conversation correctness:** локальная прокрутка после собственной отправки с открытой клавиатурой всегда показывает новый bubble целиком; одно local civil time телефона применяется для `sent_at`, bubble, списка чатов и date separator. Delivery UI имеет ровно один визуальный индикатор: часы `queued`, одна галочка `sent`, `CheckCheck` для будущего `delivered` и акцентный `CheckCheck` для будущего `read`, без дублирующих check. Тесты используют настоящую SQLite-базу там, где хранится сообщение, и фиксированные зоны `Europe/Istanbul`/`Asia/Ashgabat`.
+- **APP-014L-15 — draft preview in chats:** локальный SQLite-черновик отображается в списке как акцентное «Черновик:» и текст, не изменяя сортировку чатов по `last_message_at`.
+- **APP-014L-16 — message actions and reply gestures:** локальные long-press actions (Reply/Copy/Trash2) с доступным закрытием tap-outside и reply swipe-right с краткой `expo-haptics` feedback; никаких сетевых вызовов.
+- **APP-014L-17 — local chat search:** верхняя лупа открывает поиск по имени чата и тексту локальных сообщений из SQLite, с детерминированными SQLite-тестами.
+- **APP-014L-18 — maintained clipboard boundary:** устаревший React Native Clipboard заменяется на `expo-clipboard`; copy action сохраняет существующее локальное поведение и покрыта тестом границы.
+- **APP-014L-19 — v0.6.7 localtest release:** только после локального принятия APP-014L-14…18: versionName `0.6.7`, новый Android versionCode, тестовая сборка ARM64 с `EXPO_PUBLIC_LOCAL_TEST_MODE=1`; вручную проверяется обновление поверх 0.6.6 без потери SQLite-данных. APK собирает Hermes через `scripts/build-localtest-apk.sh` и проверяет встроенный флаг.
 
 ### ADR-002 — обязательный gate сервера и доменов перед APP-007
 

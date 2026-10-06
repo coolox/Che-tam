@@ -1,6 +1,10 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
 import { migrateDatabase } from '../src/storage/sqlite/migrate';
 import { createSqliteRepositories, type OutboxEntry, type StoredMessage } from '../src/storage/sqlite/repositories';
+import { formatChatListTime } from '../src/messages/localMessageStore';
+import { formatMessageTime, getConversationDateItems } from '../src/ui/state';
+import type { Message } from '../src/ui/types';
+import { RealSqliteDatabase, withTempSqlitePath } from './helpers/realSqlite';
 
 const now = '2026-10-03T12:00:00.000Z';
 const message: StoredMessage = { id: 'm1', chatId: 'c1', clientMessageId: 'cm1', senderId: 'p1', body: 'private body', createdAt: now, deliveryState: 'queued', replyToMessageId: null, replySenderName: null, replyPreview: null, updatedAt: now };
@@ -92,5 +96,42 @@ describe('SQLite repositories', () => {
     await expect(repositories.saveMessageAndEnqueue(message, outbox)).rejects.toThrow('Injected failure');
     expect(await repositories.listMessages('c1')).toEqual([]);
     expect(await repositories.readOutbox()).toEqual([]);
+  });
+
+  it('round-trips a stored instant through real SQLite and formats one local civil time everywhere', async () => {
+    await withTempSqlitePath('che-tam-local-time-', async (databasePath) => {
+      const database = new RealSqliteDatabase(databasePath);
+      try {
+        await migrateDatabase(database, now);
+        const repositories = createSqliteRepositories(database);
+        const createdAt = '2026-10-05T08:08:00.000Z';
+        await repositories.upsertProfile({ id: 'p1', displayName: 'Ada', avatarUrl: null, updatedAt: now });
+        await repositories.upsertChat({ id: 'c1', title: 'Chat', kind: 'direct', lastMessageAt: createdAt, unreadCount: 0, updatedAt: now });
+        await repositories.upsertMessage({ ...message, createdAt, updatedAt: createdAt });
+
+        const stored = (await repositories.listMessages('c1'))[0];
+        const viewMessage: Message = {
+          id: stored.id,
+          chatId: stored.chatId,
+          sender: 'me',
+          text: stored.body,
+          createdAt: stored.createdAt,
+          delivered: false,
+          kind: 'text',
+        };
+
+        expect(stored.createdAt).toBe(createdAt);
+        expect(formatMessageTime(stored.createdAt, { timeZone: 'Europe/Istanbul' })).toBe('11:08');
+        expect(formatChatListTime((await repositories.listChats())[0].lastMessageAt ?? '', { timeZone: 'Europe/Istanbul' })).toBe('11:08');
+        expect(formatMessageTime(stored.createdAt, { timeZone: 'Asia/Ashgabat' })).toBe('13:08');
+        expect(formatChatListTime((await repositories.listChats())[0].lastMessageAt ?? '', { timeZone: 'Asia/Ashgabat' })).toBe('13:08');
+        expect(getConversationDateItems([viewMessage], {
+          now: new Date('2026-10-05T09:00:00.000Z'),
+          timeZone: 'Europe/Istanbul',
+        })[0]).toMatchObject({ itemType: 'dateDivider', label: 'Сегодня' });
+      } finally {
+        database.close();
+      }
+    });
   });
 });

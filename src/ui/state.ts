@@ -4,8 +4,14 @@ const normalize = (value: string) => value.trim().toLocaleLowerCase('ru-RU');
 const REPLY_PREVIEW_LIMIT = 120;
 
 export type ComposerAction = 'mic' | 'send';
-export type LocalDeliveryState = 'queued' | 'sent' | 'not_sent';
+export type LocalDeliveryState = 'queued' | 'sent' | 'delivered' | 'read' | 'not_sent';
 export type ReceiptState = 'none' | 'sent' | 'delivered' | 'read';
+export type DeliveryIndicatorState = 'none' | 'queued' | 'sent' | 'delivered' | 'read' | 'not_sent';
+export type DeliveryIndicatorPresentation = {
+  icon: 'none' | 'clock' | 'check' | 'checkCheck' | 'alert';
+  iconCount: 0 | 1;
+  accent: boolean;
+};
 export type ReplyTarget = {
   messageId: string;
   senderName: string;
@@ -192,6 +198,22 @@ export function getMessagePresentation(messages: Message[], message: Message): M
   };
 }
 
+export function getDeliveryIndicatorState(presentation: Pick<MessagePresentation, 'localDeliveryState' | 'receipt'>): DeliveryIndicatorState {
+  if (presentation.localDeliveryState) {
+    return presentation.localDeliveryState;
+  }
+  return presentation.receipt;
+}
+
+export function getDeliveryIndicatorPresentation(state: DeliveryIndicatorState): DeliveryIndicatorPresentation {
+  if (state === 'queued') return { icon: 'clock', iconCount: 1, accent: false };
+  if (state === 'sent') return { icon: 'check', iconCount: 1, accent: false };
+  if (state === 'delivered') return { icon: 'checkCheck', iconCount: 1, accent: false };
+  if (state === 'read') return { icon: 'checkCheck', iconCount: 1, accent: true };
+  if (state === 'not_sent') return { icon: 'alert', iconCount: 1, accent: false };
+  return { icon: 'none', iconCount: 0, accent: false };
+}
+
 export function getConversationDateItems(
   messages: Message[],
   options: ConversationDateGroupingOptions = {},
@@ -243,8 +265,12 @@ export function getMissedCallCount(entries: CallLogEntry[]): number {
   return entries.filter(entry => entry.direction === 'missed').length;
 }
 
-export function formatMessageTime(value: string): string {
-  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }).format(new Date(value));
+export function formatLocalCivilTime(value: string, options: Intl.DateTimeFormatOptions = {}): string {
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit', ...options }).format(new Date(value));
+}
+
+export function formatMessageTime(value: string, options: Intl.DateTimeFormatOptions = {}): string {
+  return formatLocalCivilTime(value, options);
 }
 
 export function getChatPreview(chat: Chat): string {

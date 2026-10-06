@@ -55,6 +55,8 @@ import {
   createReplyTarget,
   formatReplyPreview,
   formatMessageTime,
+  getDeliveryIndicatorPresentation,
+  getDeliveryIndicatorState,
   getComposerState,
   getConversationDateItems,
   getMessagePresentation,
@@ -63,6 +65,7 @@ import {
   type MessageActionSheetState,
   type ReplyTarget,
   type ConversationDateItem,
+  type DeliveryIndicatorState,
 } from '../../ui/state';
 import { useTheme } from '../../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../../ui/tokens';
@@ -121,7 +124,9 @@ export function ConversationScreen({
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const scrollIntentState = useRef<ConversationScrollIntentState>({
     isAtLatest: true,
+    isKeyboardOpen: false,
     latestMessageId: latestMessage?.id ?? null,
+    pendingScrollAfterLayout: false,
   });
 
   const requestScrollToLatest = useCallback((animated = true) => {
@@ -138,6 +143,10 @@ export function ConversationScreen({
 
   const handleMessageScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     applyScrollIntent({ type: 'scrolled', offsetY: event.nativeEvent.contentOffset.y });
+  }, [applyScrollIntent]);
+
+  const handleLatestLayoutSettled = useCallback(() => {
+    applyScrollIntent({ type: 'layoutSettled' });
   }, [applyScrollIntent]);
 
   useEffect(() => {
@@ -191,11 +200,17 @@ export function ConversationScreen({
   }, [onSendMessage, replyTarget]);
 
   useEffect(() => {
-    const subscription = Keyboard.addListener('keyboardDidShow', () => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => {
       applyScrollIntent({ type: 'keyboardOpened' });
     });
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => {
+      applyScrollIntent({ type: 'keyboardClosed' });
+    });
 
-    return () => subscription.remove();
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
   }, [applyScrollIntent]);
 
   return (
@@ -223,7 +238,7 @@ export function ConversationScreen({
         <HeaderIconButton accessibilityLabel="Видеозвонок" icon={<Video color={colors.accent} size={22} />} onPress={() => onStartCall('video')} />
         <HeaderIconButton accessibilityLabel="Меню чата" icon={<EllipsisVertical color={colors.accent} size={22} />} onPress={() => undefined} />
       </View>
-      <View style={styles.messageArea}>
+      <View onLayout={handleLatestLayoutSettled} style={styles.messageArea}>
         <View pointerEvents="none" style={styles.chatPattern}>
           <View style={[styles.patternDot, styles.patternDotOne]} />
           <View style={[styles.patternDot, styles.patternDotTwo]} />
@@ -243,6 +258,7 @@ export function ConversationScreen({
                   : null
           }
           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onContentSizeChange={handleLatestLayoutSettled}
           onScroll={handleMessageScroll}
           ref={listRef}
           renderItem={({ item }) => (
@@ -388,8 +404,7 @@ function MessageBubble({
       <Text style={styles.messageText}>{message.text}</Text>
       <View style={styles.messageMetaRow}>
         <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
-        <LocalDeliveryControl message={message} state={presentation.localDeliveryState} onRetryMessage={onRetryMessage} />
-        <ReceiptIcon state={presentation.receipt} />
+        <DeliveryIndicator message={message} onRetryMessage={onRetryMessage} state={getDeliveryIndicatorState(presentation)} />
       </View>
     </Pressable>
   );
@@ -469,24 +484,28 @@ function ActionMenuButton({ danger = false, icon, label, onPress }: { danger?: b
   );
 }
 
-function LocalDeliveryControl({
+function DeliveryIndicator({
   message,
   onRetryMessage,
   state,
 }: {
   message: Message;
   onRetryMessage: (clientMessageId: string) => void;
-  state: 'queued' | 'sent' | 'not_sent' | null;
+  state: DeliveryIndicatorState;
 }) {
   const { colors } = useTheme();
   const styles = useStyles();
-  if (state === 'queued') {
+  const presentation = getDeliveryIndicatorPresentation(state);
+  if (presentation.icon === 'clock') {
     return <Clock3 accessibilityLabel="В очереди" color={colors.textMuted} size={14} strokeWidth={2.4} />;
   }
-  if (state === 'sent') {
+  if (presentation.icon === 'check') {
     return <Check accessibilityLabel="Отправлено" color={colors.textMuted} size={15} strokeWidth={2.5} />;
   }
-  if (state === 'not_sent' && message.clientMessageId && message.kind === 'text') {
+  if (presentation.icon === 'checkCheck') {
+    return <CheckCheck accessibilityLabel={state === 'read' ? 'Прочитано' : 'Доставлено'} color={presentation.accent ? colors.accent : colors.textMuted} size={15} strokeWidth={2.5} />;
+  }
+  if (presentation.icon === 'alert' && message.clientMessageId && message.kind === 'text') {
     return (
       <View style={styles.notSentControl}>
         <CircleAlert accessibilityLabel="Не отправлено" color={colors.danger} size={15} strokeWidth={2.5} />
@@ -502,15 +521,6 @@ function LocalDeliveryControl({
     );
   }
   return null;
-}
-
-function ReceiptIcon({ state }: { state: 'none' | 'sent' | 'delivered' | 'read' }) {
-  const { colors } = useTheme();
-  if (state === 'none') {
-    return null;
-  }
-  const iconColor = state === 'read' ? colors.accent : colors.textMuted;
-  return state === 'sent' ? <Check color={iconColor} size={15} strokeWidth={2.5} /> : <CheckCheck color={iconColor} size={15} strokeWidth={2.5} />;
 }
 
 function HeaderIconButton({
