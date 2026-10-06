@@ -32,10 +32,11 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useConnectionStatus } from '../../hooks/useConnectionStatus';
+import { useConnectionStatus, type NetworkAvailabilitySource } from '../../hooks/useConnectionStatus';
 import {
   EMPTY_CONVERSATION_TEXT,
   LOCAL_LOADING_TEXT,
+  type LocalDataErrorDiagnostic,
   type LocalDataSnapshot,
 } from '../../messages/localMessageStore';
 import {
@@ -97,9 +98,12 @@ export function reduceConversationScrollIntent(
 
 type ConversationScreenProps = {
   chat: Chat;
+  connectionStatusSource?: NetworkAvailabilitySource;
   composer: string;
+  dataErrorDiagnostic: LocalDataErrorDiagnostic | null;
   dataErrorText: string | null;
   dataStatus: LocalDataSnapshot['status'];
+  isLocalTestModeEnabled: boolean;
   messages: Message[];
   onBack: () => void;
   onComposer: (value: string) => void;
@@ -111,9 +115,12 @@ type ConversationScreenProps = {
 
 export function ConversationScreen({
   chat,
+  connectionStatusSource,
   composer,
+  dataErrorDiagnostic,
   dataErrorText,
   dataStatus,
+  isLocalTestModeEnabled,
   messages,
   onBack,
   onComposer,
@@ -124,7 +131,7 @@ export function ConversationScreen({
 }: ConversationScreenProps) {
   const { colors } = useTheme();
   const styles = useStyles();
-  const connection = useConnectionStatus();
+  const connection = useConnectionStatus(connectionStatusSource);
   const conversationItems = useMemo(() => getConversationDateItems(messages), [messages]);
   const reversedConversationItems = useMemo(() => [...conversationItems].reverse(), [conversationItems]);
   const composerState = getComposerState(composer);
@@ -196,7 +203,7 @@ export function ConversationScreen({
             accessibilityLiveRegion="polite"
             accessibilityRole="text"
             numberOfLines={1}
-            style={styles.connectionBanner}
+            style={[styles.connectionBanner, connection.status === 'online' && styles.connectionBannerOnline]}
           >
             {connection.text}
           </Text>
@@ -220,7 +227,7 @@ export function ConversationScreen({
           keyExtractor={item => item.key}
           ListFooterComponent={
             dataStatus === 'loading' ? <Text style={styles.dateDivider}>{LOCAL_LOADING_TEXT}</Text>
-              : dataStatus === 'error' ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{dataErrorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetryLocalData} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>
+              : dataStatus === 'error' ? <View style={styles.emptyState}><Text style={styles.emptyTitle}>{dataErrorText}</Text><LocalDataErrorDiagnosticText diagnostic={dataErrorDiagnostic} enabled={isLocalTestModeEnabled} /><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetryLocalData} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>
                 : messages.length === 0 ? <Text style={styles.dateDivider}>{EMPTY_CONVERSATION_TEXT}</Text>
                   : null
           }
@@ -283,6 +290,22 @@ export function ConversationScreen({
         </Pressable>
       </View>
     </KeyboardAvoidingView>
+  );
+}
+
+function LocalDataErrorDiagnosticText({
+  diagnostic,
+  enabled,
+}: {
+  diagnostic: LocalDataErrorDiagnostic | null;
+  enabled: boolean;
+}) {
+  const styles = useStyles();
+  if (!enabled || !diagnostic) return null;
+  return (
+    <Text accessibilityLabel={`Диагностика локальной ошибки: ${diagnostic.name}: ${diagnostic.message}`} style={styles.localDataErrorDiagnostic}>
+      {diagnostic.name}: {diagnostic.message}
+    </Text>
   );
 }
 
@@ -419,6 +442,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   conversationTitle: { flex: 1, minWidth: 0 },
   chatName: { color: colors.text, flexShrink: 1, fontSize: typography.md, fontWeight: '700' },
   connectionBanner: { color: colors.textSecondary, fontSize: typography.xs, fontWeight: '700' },
+  connectionBannerOnline: { color: colors.accent },
   messageArea: { backgroundColor: colors.background, flex: 1 },
   messageList: { flex: 1 },
   messages: { flexGrow: 1, gap: spacing.sm, justifyContent: 'flex-start', padding: spacing.md, paddingBottom: 92 },
@@ -462,6 +486,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   },
   emptyState: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.xl },
   emptyTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800' },
+  localDataErrorDiagnostic: { color: colors.textSecondary, fontSize: typography.xs, lineHeight: 18, textAlign: 'center' },
   secondaryButton: {
     alignItems: 'center',
     borderColor: colors.accent,

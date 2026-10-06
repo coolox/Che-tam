@@ -11,6 +11,7 @@ import {
 } from '../transport/connectionState';
 
 export type NetworkAvailabilitySource = {
+  explicitlyConnectedTransport?: boolean;
   addEventListener(listener: (available: boolean) => void): () => void;
 };
 
@@ -30,6 +31,9 @@ export function subscribeToNetworkAvailability(
     if (lastAvailability === null) {
       lastAvailability = available;
       dispatch({ type: 'networkObserved', available });
+      if (available && source.explicitlyConnectedTransport) {
+        dispatch({ type: 'connectionSucceeded' });
+      }
       return;
     }
 
@@ -39,11 +43,17 @@ export function subscribeToNetworkAvailability(
 
     lastAvailability = available;
     dispatch({ type: available ? 'networkRestored' : 'networkLost' });
+    if (available && source.explicitlyConnectedTransport) {
+      dispatch({ type: 'connectionSucceeded' });
+    }
   });
 }
 
 export function useConnectionStatus(source: NetworkAvailabilitySource = netInfoSource): ConnectionPresentation {
-  const [status, dispatch] = useReducer(connectionReducer, initialConnectionStatus);
+  const [status, dispatch] = useReducer(
+    connectionReducer,
+    source.explicitlyConnectedTransport ? 'online' : initialConnectionStatus,
+  );
 
   useEffect(() => subscribeToNetworkAvailability(source, dispatch), [source]);
 

@@ -10,10 +10,12 @@ describe('connection banner wiring', () => {
 
     const renderedHookCalls = outsideConversation.match(/useConnectionStatus\(\)/g) ?? [];
 
-    expect(conversation).toContain("const connection = useConnectionStatus();");
+    expect(conversation).toContain('const connection = useConnectionStatus(connectionStatusSource);');
+    expect(shell).toContain('connectionStatusSource={connectionStatusSource}');
     expect(conversation).toContain('accessibilityRole="text"');
     expect(conversation).toContain('accessibilityLiveRegion="polite"');
     expect(conversation).toContain('accessibilityLabel={connection.accessibilityLabel}');
+    expect(conversation).toContain("connection.status === 'online' && styles.connectionBannerOnline");
     expect(conversation).toContain('{connection.text}');
     expect(renderedHookCalls).toEqual([]);
     expect(source).not.toMatch(/\b(fetch|WebSocket|socket|endpoint)\b|https?:\/\//i);

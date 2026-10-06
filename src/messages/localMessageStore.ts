@@ -11,11 +11,18 @@ export const LOCAL_DATA_ERROR_TEXT = 'Не удалось открыть лок�
 export const LOCAL_LOADING_TEXT = 'Загружаем локальные сообщения…';
 export const EMPTY_CHATS_TEXT = 'Здесь появятся ваши чаты';
 export const EMPTY_CONVERSATION_TEXT = 'В этом чате пока нет сообщений';
+const LOCAL_DATA_DIAGNOSTIC_NAME_LIMIT = 80;
+const LOCAL_DATA_DIAGNOSTIC_MESSAGE_LIMIT = 1000;
+
+export type LocalDataErrorDiagnostic = {
+  name: string;
+  message: string;
+};
 
 export type LocalDataSnapshot =
-  | { status: 'loading'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null }
-  | { status: 'ready'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null }
-  | { status: 'error'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: string };
+  | { status: 'loading'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null; errorDiagnostic: null }
+  | { status: 'ready'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: null; errorDiagnostic: null }
+  | { status: 'error'; chats: Chat[]; messagesByChat: Record<string, Message[]>; errorText: string; errorDiagnostic: LocalDataErrorDiagnostic | null };
 
 export type LocalMessageStore = {
   bootstrap(): Promise<void>;
@@ -56,11 +63,39 @@ function hashErrorText(value: string): string {
   return (hash >>> 0).toString(36).slice(0, 6).padStart(6, '0');
 }
 
+function limitDiagnosticText(value: string, limit: number): string {
+  const sanitized = [...value].map((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 31 || code === 127 ? ' ' : character;
+  }).join('').trim();
+  if (sanitized.length <= limit) return sanitized;
+  return `${sanitized.slice(0, limit - 1)}…`;
+}
+
+export function formatLocalDataErrorDiagnostic(error: unknown): LocalDataErrorDiagnostic {
+  const name = error instanceof Error ? error.name : 'Error';
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    name: limitDiagnosticText(name, LOCAL_DATA_DIAGNOSTIC_NAME_LIMIT) || 'Error',
+    message: limitDiagnosticText(message, LOCAL_DATA_DIAGNOSTIC_MESSAGE_LIMIT),
+  };
+}
+
 export function formatLocalDataError(error: unknown): string {
   const name = error instanceof Error ? error.name : 'Error';
   const message = error instanceof Error ? error.message : String(error);
   const safeName = name.replace(/[^a-zA-Z0-9_ -]/g, '').trim().slice(0, 24) || 'Error';
   return `${LOCAL_DATA_ERROR_TEXT} Код: ${safeName}-${hashErrorText(message)}`;
+}
+
+function formatLocalDataErrorPresentation(
+  error: unknown,
+  localTestMode: LocalTestModeConfig,
+): Pick<Extract<LocalDataSnapshot, { status: 'error' }>, 'errorText' | 'errorDiagnostic'> {
+  return {
+    errorText: formatLocalDataError(error),
+    errorDiagnostic: localTestMode.enabled ? formatLocalDataErrorDiagnostic(error) : null,
+  };
 }
 
 function initials(title: string): string {
@@ -152,7 +187,7 @@ export function createLocalMessageStore(
   databaseName = 'che-tam-local.db',
   options: LocalMessageStoreOptions = {},
 ): LocalMessageStore {
-  let snapshot: LocalDataSnapshot = { status: 'loading', chats: [], messagesByChat: {}, errorText: null };
+  let snapshot: LocalDataSnapshot = { status: 'loading', chats: [], messagesByChat: {}, errorText: null, errorDiagnostic: null };
   let repositories: SqliteRepositories | null = null;
   let outboxWorker: LocalOutboxWorker | null = null;
   let networkAvailable = options.initialNetworkAvailable ?? false;
@@ -177,7 +212,7 @@ export function createLocalMessageStore(
       messagesByChat[storedChat.id] = messages;
       chats.push(chatToViewModel(storedChat, messages.at(-1)?.text ?? ''));
     }
-    setSnapshot({ status: 'ready', chats, messagesByChat, errorText: null });
+    setSnapshot({ status: 'ready', chats, messagesByChat, errorText: null, errorDiagnostic: null });
   }
 
   function refreshAfterOutboxAck(): void {
@@ -186,7 +221,7 @@ export function createLocalMessageStore(
 
   return {
     async bootstrap() {
-      setSnapshot({ status: 'loading', chats: [], messagesByChat: {}, errorText: null });
+      setSnapshot({ status: 'loading', chats: [], messagesByChat: {}, errorText: null, errorDiagnostic: null });
       try {
         const database = await factory(databaseName);
         await migrateDatabase(database, FIXTURE_TIMESTAMP);
@@ -208,7 +243,7 @@ export function createLocalMessageStore(
         unsubscribeNetworkAvailability = null;
         outboxWorker?.dispose();
         outboxWorker = null;
-        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
     async clearUnread(chatId) {
@@ -217,7 +252,7 @@ export function createLocalMessageStore(
         await repositories.clearChatUnread(chatId, FIXTURE_TIMESTAMP);
         await refresh();
       } catch (error) {
-        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: [], messagesByChat: {}, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
     async clearComposerDraft(chatId) {
@@ -225,7 +260,7 @@ export function createLocalMessageStore(
       try {
         await repositories.clearChatDraft(chatId);
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
     dispose() {
@@ -246,7 +281,7 @@ export function createLocalMessageStore(
         }
         return { retried };
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
         return { retried: false };
       }
     },
@@ -255,7 +290,7 @@ export function createLocalMessageStore(
       try {
         return (await repositories.readChatDraft(chatId))?.text ?? null;
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
         return null;
       }
     },
@@ -268,7 +303,7 @@ export function createLocalMessageStore(
         }
         await repositories.saveChatDraft({ chatId, text: draft, updatedAt: now().toISOString() });
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
     },
     async sendTextMessage(chatId, draft) {
@@ -302,7 +337,7 @@ export function createLocalMessageStore(
         void outboxWorker?.kick();
         return { sent: true, clientMessageId };
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, errorText: formatLocalDataError(error) });
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
         return { sent: false, clientMessageId: null };
       }
     },

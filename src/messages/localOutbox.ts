@@ -1,4 +1,5 @@
 import { calculateRetryDelayMs } from '../transport/backoff';
+import type { NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import type { OutboxEntry, SqliteRepositories } from '../storage/sqlite/repositories';
 import { getLocalTestModeConfig, type LocalTestModeConfig } from './localTestMode';
 
@@ -30,6 +31,19 @@ const DEFAULT_SEND_TIMEOUT_MS = 30_000;
 export function createDebugLocalAckTransport(localTestMode: LocalTestModeConfig = getLocalTestModeConfig()): LocalOutboxTransport | null {
   if (!localTestMode.enabled) return null;
   return { send: async () => ({ ok: true }) };
+}
+
+export function createDebugLocalAckTransportAvailabilitySource(
+  localTestMode: LocalTestModeConfig = getLocalTestModeConfig(),
+): NetworkAvailabilitySource | null {
+  if (!createDebugLocalAckTransport(localTestMode)) return null;
+  return {
+    explicitlyConnectedTransport: true,
+    addEventListener(listener) {
+      listener(true);
+      return () => undefined;
+    },
+  };
 }
 
 export function createLocalOutboxWorker(

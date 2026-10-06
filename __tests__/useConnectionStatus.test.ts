@@ -31,4 +31,40 @@ describe('network availability subscription', () => {
     unsubscribe();
     expect(cleanup).toHaveBeenCalledTimes(1);
   });
+
+  it('promotes only an explicit connected local transport source to online', () => {
+    let listener: ((available: boolean) => void) | undefined;
+    const source: NetworkAvailabilitySource = {
+      explicitlyConnectedTransport: true,
+      addEventListener(callback) {
+        listener = callback;
+        return () => undefined;
+      },
+    };
+    const dispatch = jest.fn();
+
+    subscribeToNetworkAvailability(source, dispatch);
+    listener?.(true);
+
+    expect(dispatch).toHaveBeenNthCalledWith(1, { type: 'networkObserved', available: true });
+    expect(dispatch).toHaveBeenNthCalledWith(2, { type: 'connectionSucceeded' });
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not promote ordinary availability observations to online', () => {
+    let listener: ((available: boolean) => void) | undefined;
+    const source: NetworkAvailabilitySource = {
+      addEventListener(callback) {
+        listener = callback;
+        return () => undefined;
+      },
+    };
+    const dispatch = jest.fn();
+
+    subscribeToNetworkAvailability(source, dispatch);
+    listener?.(true);
+
+    expect(dispatch).toHaveBeenCalledWith({ type: 'networkObserved', available: true });
+    expect(dispatch).toHaveBeenCalledTimes(1);
+  });
 });

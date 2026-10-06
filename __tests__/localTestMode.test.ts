@@ -39,7 +39,7 @@ describe('explicit local test mode', () => {
 
     await store.bootstrap();
 
-    expect(store.getSnapshot()).toEqual({ status: 'ready', chats: [], messagesByChat: {}, errorText: null });
+    expect(store.getSnapshot()).toEqual({ status: 'ready', chats: [], messagesByChat: {}, errorText: null, errorDiagnostic: null });
     expect(createDebugLocalAckTransport(localTestMode)).toBeNull();
   });
 

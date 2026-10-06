@@ -290,6 +290,17 @@ describe('UI Preview local behavior', () => {
     expect(appSource).toContain('isLocalTestModeEnabled={localTestMode.enabled}');
   });
 
+  it('gates local data raw diagnostics behind explicit local test mode on both error surfaces', () => {
+    const previewSource = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
+    const conversationSource = fs.readFileSync('src/app/screens/ConversationScreen.tsx', 'utf8');
+
+    expect(previewSource).toContain('errorDiagnostic={dataErrorDiagnostic}');
+    expect(previewSource).toContain('enabled={isLocalTestModeEnabled}');
+    expect(previewSource).toContain('accessibilityLabel={`Диагностика локальной ошибки: ${diagnostic.name}: ${diagnostic.message}`}');
+    expect(conversationSource).toContain('diagnostic={dataErrorDiagnostic} enabled={isLocalTestModeEnabled}');
+    expect(conversationSource).toContain('accessibilityLabel={`Диагностика локальной ошибки: ${diagnostic.name}: ${diagnostic.message}`}');
+  });
+
   it('keeps an exact 8dp gap from the header to the first row on every tab', () => {
     const tabs: TabKey[] = ['chats', 'calls', 'family', 'settings'];
     expect(tabs.map(tab => getHeaderToFirstContentRowGap(tab))).toEqual([8, 8, 8, 8]);

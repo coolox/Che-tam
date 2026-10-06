@@ -79,8 +79,10 @@ import { CallLogEntry, Chat, TabKey, TrafficModeKey } from '../ui/types';
 import {
   EMPTY_CHATS_TEXT,
   LOCAL_LOADING_TEXT,
+  type LocalDataErrorDiagnostic,
   type LocalDataSnapshot,
 } from '../messages/localMessageStore';
+import type { NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { ConversationScreen } from './screens/ConversationScreen';
 
 type Screen = 'welcome' | 'home' | 'conversation' | 'call';
@@ -100,6 +102,7 @@ const PIP_CONTROLS_GAP = spacing.lg;
 const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
 
 type PreviewAppShellProps = {
+  connectionStatusSource?: NetworkAvailabilitySource;
   isLocalTestModeEnabled?: boolean;
   snapshot: LocalDataSnapshot;
   onClearComposerDraft: (chatId: string) => Promise<void>;
@@ -158,7 +161,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -373,6 +376,7 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearComposerDr
         <HomeScreen
           activeTab={activeTab}
           chats={orderedChats}
+          dataErrorDiagnostic={snapshot.errorDiagnostic}
           dataErrorText={snapshot.errorText}
           dataStatus={snapshot.status}
           callLog={callLog}
@@ -406,9 +410,12 @@ function ThemedApp({ isLocalTestModeEnabled = false, snapshot, onClearComposerDr
       {screen === 'conversation' && selectedChat ? (
         <ConversationScreen
           chat={selectedChat}
+          connectionStatusSource={connectionStatusSource}
           composer={composer}
+          dataErrorDiagnostic={snapshot.errorDiagnostic}
           dataErrorText={snapshot.errorText}
           dataStatus={snapshot.status}
+          isLocalTestModeEnabled={isLocalTestModeEnabled}
           messages={selectedMessages}
           onBack={() => setScreen('home')}
           onComposer={updateComposer}
@@ -474,6 +481,7 @@ function WelcomeScreen({
 function HomeScreen({
   activeTab,
   chats,
+  dataErrorDiagnostic,
   dataErrorText,
   dataStatus,
   callLog,
@@ -505,6 +513,7 @@ function HomeScreen({
 }: {
   activeTab: TabKey;
   chats: Chat[];
+  dataErrorDiagnostic: LocalDataErrorDiagnostic | null;
   dataErrorText: string | null;
   dataStatus: LocalDataSnapshot['status'];
   callLog: CallLogEntry[];
@@ -562,7 +571,9 @@ function HomeScreen({
         {activeTab === 'chats' ? (
           <LocalChatsPanel
             chats={chats}
+            errorDiagnostic={dataErrorDiagnostic}
             errorText={dataErrorText}
+            isLocalTestModeEnabled={isLocalTestModeEnabled}
             status={dataStatus}
             selectedChatIds={selectedChatIds}
             onOpenChat={onOpenChat}
@@ -739,7 +750,9 @@ function AboutBrand() {
 
 function LocalChatsPanel({
   chats,
+  errorDiagnostic,
   errorText,
+  isLocalTestModeEnabled,
   status,
   selectedChatIds,
   onOpenChat,
@@ -748,7 +761,9 @@ function LocalChatsPanel({
   onToggleSelectedChat,
 }: {
   chats: Chat[];
+  errorDiagnostic: LocalDataErrorDiagnostic | null;
   errorText: string | null;
+  isLocalTestModeEnabled: boolean;
   status: LocalDataSnapshot['status'];
   selectedChatIds: string[];
   onOpenChat: (chatId: string) => void;
@@ -758,9 +773,25 @@ function LocalChatsPanel({
 }) {
   const styles = useStyles();
   if (status === 'loading') return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{LOCAL_LOADING_TEXT}</Text></View>;
-  if (status === 'error') return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{errorText}</Text><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetry} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>;
+  if (status === 'error') return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{errorText}</Text><LocalDataErrorDiagnosticText diagnostic={errorDiagnostic} enabled={isLocalTestModeEnabled} /><Pressable accessibilityLabel="Повторить открытие локальных данных" accessibilityRole="button" onPress={onRetry} style={styles.secondaryButton}><Text style={styles.secondaryButtonText}>Попробовать ещё раз</Text></Pressable></View>;
   if (!chats.length) return <View style={styles.emptyState}><Text style={styles.emptyTitle}>{EMPTY_CHATS_TEXT}</Text></View>;
   return <ChatList chats={chats} selectedChatIds={selectedChatIds} onOpenChat={onOpenChat} onStartSelectingChat={onStartSelectingChat} onToggleSelectedChat={onToggleSelectedChat} />;
+}
+
+function LocalDataErrorDiagnosticText({
+  diagnostic,
+  enabled,
+}: {
+  diagnostic: LocalDataErrorDiagnostic | null;
+  enabled: boolean;
+}) {
+  const styles = useStyles();
+  if (!enabled || !diagnostic) return null;
+  return (
+    <Text accessibilityLabel={`Диагностика локальной ошибки: ${diagnostic.name}: ${diagnostic.message}`} style={styles.localDataErrorDiagnostic}>
+      {diagnostic.name}: {diagnostic.message}
+    </Text>
+  );
 }
 
 function ChatList({
@@ -1729,6 +1760,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   hintText: { color: colors.textMuted, fontSize: typography.sm },
   emptyState: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.md, padding: spacing.xl },
   emptyTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800' },
+  localDataErrorDiagnostic: { color: colors.textSecondary, fontSize: typography.xs, lineHeight: 18, textAlign: 'center' },
   fallbackText: { color: colors.danger, fontSize: typography.sm, fontWeight: '800' },
   primaryButton: {
     alignItems: 'center',

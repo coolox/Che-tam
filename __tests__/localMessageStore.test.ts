@@ -1,5 +1,6 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
-import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, formatLocalDataError, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
+import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, formatLocalDataError, formatLocalDataErrorDiagnostic, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
+import { createDebugLocalAckTransportAvailabilitySource } from '../src/messages/localOutbox';
 
 describe('local message store', () => {
   it('formats chat-list times in the selected device time zone', () => {
@@ -31,7 +32,7 @@ describe('local message store', () => {
     const database = new InMemorySqliteDatabase();
     const store = createLocalMessageStore(async () => database, 'che-tam-local.db', { developmentSeedEnabled: false });
     await store.bootstrap();
-    expect(store.getSnapshot()).toEqual({ status: 'ready', chats: [], messagesByChat: {}, errorText: null });
+    expect(store.getSnapshot()).toEqual({ status: 'ready', chats: [], messagesByChat: {}, errorText: null, errorDiagnostic: null });
   });
 
   it('clears persisted unread when opening a chat', async () => {
@@ -87,6 +88,7 @@ describe('local message store', () => {
     expect(store.getSnapshot()).toMatchObject({ status: 'error' });
     expect(store.getSnapshot().errorText).toMatch(/^Не удалось открыть локальные данные\. Попробуйте ещё раз\. Код: Error-[a-z0-9]{6}$/);
     expect(store.getSnapshot().errorText).not.toContain('private failure');
+    expect(store.getSnapshot().errorDiagnostic).toBeNull();
   });
 
   it('formats bounded local error codes without stacks or raw messages', () => {
@@ -96,5 +98,51 @@ describe('local message store', () => {
     expect(errorText).not.toContain('messages.chat_id');
     expect(errorText).not.toContain('secret');
     expect(errorText.length).toBeLessThanOrEqual(LOCAL_DATA_ERROR_TEXT.length + 40);
+  });
+
+  it('exposes bounded raw diagnostics only in explicit local test mode', async () => {
+    const failure = new TypeError('FOREIGN KEY constraint failed: messages.chat_id / secret token');
+    const productionStore = createLocalMessageStore(async () => { throw failure; }, 'che-tam-local.db', { localTestMode: { enabled: false } });
+    const localTestStore = createLocalMessageStore(async () => { throw failure; }, 'che-tam-local.db', { localTestMode: { enabled: true } });
+
+    await productionStore.bootstrap();
+    await localTestStore.bootstrap();
+
+    expect(productionStore.getSnapshot()).toMatchObject({
+      status: 'error',
+      errorDiagnostic: null,
+    });
+    expect(productionStore.getSnapshot().errorText).not.toContain('messages.chat_id');
+    expect(productionStore.getSnapshot().errorText).not.toContain('secret token');
+    expect(localTestStore.getSnapshot()).toMatchObject({
+      status: 'error',
+      errorDiagnostic: {
+        name: 'TypeError',
+        message: 'FOREIGN KEY constraint failed: messages.chat_id / secret token',
+      },
+    });
+  });
+
+  it('bounds local test diagnostics for UI presentation', () => {
+    const error = new Error(`line one\n${'x'.repeat(1200)}`);
+    error.name = 'Custom\x00DatabaseError';
+    const diagnostic = formatLocalDataErrorDiagnostic(error);
+
+    expect(diagnostic.name).toBe('Custom DatabaseError');
+    expect(diagnostic.message).toMatch(/^line one x+/);
+    expect(diagnostic.message).toHaveLength(1000);
+    expect(diagnostic.message.endsWith('…')).toBe(true);
+  });
+
+  it('exposes a connected status source only for explicit local fake ack transport mode', () => {
+    expect(createDebugLocalAckTransportAvailabilitySource({ enabled: false })).toBeNull();
+
+    const source = createDebugLocalAckTransportAvailabilitySource({ enabled: true });
+    const listener = jest.fn();
+    const unsubscribe = source?.addEventListener(listener);
+
+    expect(source).toMatchObject({ explicitlyConnectedTransport: true });
+    expect(listener).toHaveBeenCalledWith(true);
+    expect(unsubscribe).toEqual(expect.any(Function));
   });
 });
