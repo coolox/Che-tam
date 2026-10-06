@@ -6,20 +6,25 @@ jest.mock('@react-native-async-storage/async-storage', () => ({
   default: { getItem: jest.fn(), setItem: jest.fn() },
 }));
 jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
-jest.mock('react-native-keyboard-controller', () => ({
-  KeyboardAvoidingView: 'KeyboardAvoidingView',
-}));
 
 import {
+  CONVERSATION_KEYBOARD_AVOIDING_PROPS,
   reduceConversationScrollIntent,
   type ConversationScrollIntentState,
-} from '../src/app/screens/ConversationScreen';
+} from '../src/app/screens/conversationKeyboard';
 
 describe('conversation keyboard and latest-message scroll intent', () => {
   const atLatest: ConversationScrollIntentState = { isAtLatest: true, latestMessageId: 'm1' };
 
   it('selects Android resize keyboard layout mode', () => {
     expect(appConfig.expo.android?.softwareKeyboardLayoutMode).toBe('resize');
+  });
+
+  it('configures Android keyboard avoidance with explicit padding behavior', () => {
+    expect(CONVERSATION_KEYBOARD_AVOIDING_PROPS).toMatchObject({
+      automaticOffset: true,
+      behavior: 'padding',
+    });
   });
 
   it('requests latest scroll for outgoing updates and keyboard open at the bottom', () => {
