@@ -11,7 +11,7 @@ Access is by one-time invitation code, issued manually by Arslan to an allowed l
 - The local app asks for `Код приглашения` and `Как вас зовут`; it does not collect a phone number and does not send or request SMS.
 - Each invitation code is single-use at the future service boundary and binds the resulting account to one device (APP-010).
 - A phone change receives a new code from Arslan; self-service transfer and phone/SMS fallback are out of scope.
-- During `LOCAL_TEST_MODE`, only an explicit test invite code is accepted locally. It exists for local testing only and does not create a real account or network request.
+- During `LOCAL_TEST_MODE`, only the documented test invite code `ТЕСТ` is accepted locally after Unicode trim and case-insensitive comparison. The Latin spelling `TEST` is also accepted for tester keyboards. This exists for local testing only and does not create a real account or network request.
 - The authoritative issuance, validation, consumption, device binding and replacement-code audit belong to the server after ADR-002, tracked under APP-008. The app must treat a future server decision as authoritative.
 
 ## Consequences

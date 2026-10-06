@@ -18,15 +18,19 @@ async function eventually(assertion: () => Promise<void> | void): Promise<void> 
 }
 
 describe('explicit local test mode', () => {
-  it('resolves true only for EXPO_PUBLIC_LOCAL_TEST_MODE=1', () => {
-    expect(resolveLocalTestMode({}).enabled).toBe(false);
-    expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: '' }).enabled).toBe(false);
-    expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: 'true' }).enabled).toBe(false);
-    expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: '1' }).enabled).toBe(true);
+  it('resolves true only for accepted EXPO_PUBLIC_LOCAL_TEST_MODE values', () => {
+    ['1', ' 1 ', 'true', 'TRUE', 'True', ' TrUe '].forEach((value) => {
+      expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: value }).enabled).toBe(true);
+    });
+
+    [undefined, '', '0', 'false', 'yes', 'on', '2', ' truex ', ' локально '].forEach((value) => {
+      expect(resolveLocalTestMode({ EXPO_PUBLIC_LOCAL_TEST_MODE: value }).enabled).toBe(false);
+    });
   });
 
   it('extracts the embedded runtime config flag without mutating process env', () => {
     expect(getLocalTestModeConfig({ expoConfig: { extra: { EXPO_PUBLIC_LOCAL_TEST_MODE: '1' } } }).enabled).toBe(true);
+    expect(getLocalTestModeConfig({ expoConfig: { extra: { EXPO_PUBLIC_LOCAL_TEST_MODE: 'true' } } }).enabled).toBe(true);
     expect(getLocalTestModeConfig({ expoConfig: { extra: { EXPO_PUBLIC_LOCAL_TEST_MODE: '0' } } }).enabled).toBe(false);
     expect(getLocalTestModeConfig({ expoConfig: { extra: {} } }).enabled).toBe(false);
     expect(getLocalTestModeConfig({ expoConfig: null }).enabled).toBe(false);

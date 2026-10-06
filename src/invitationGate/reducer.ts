@@ -1,5 +1,5 @@
 // Non-secret local-only code for deterministic LOCAL_TEST_MODE admission.
-export const LOCAL_TEST_INVITE_CODE = 'LOCAL-TEST-INVITE';
+export const LOCAL_TEST_INVITE_CODE = 'ТЕСТ';
 
 export type InvitationGateState =
   | { status: 'editing'; inviteCode: string; displayName: string; error: string | null }
@@ -26,6 +26,15 @@ export function isInvitationGateSubmitDisabled(state: InvitationGateState): bool
   return state.status !== 'editing' || state.inviteCode.trim().length === 0 || normalizeDisplayName(state.displayName).length === 0;
 }
 
+function normalizeInviteCode(inviteCode: string): string {
+  return inviteCode.trim().toLocaleUpperCase('ru-RU');
+}
+
+function isLocalTestInviteCode(inviteCode: string): boolean {
+  const normalizedInviteCode = normalizeInviteCode(inviteCode);
+  return normalizedInviteCode === LOCAL_TEST_INVITE_CODE || normalizedInviteCode === 'TEST';
+}
+
 export function invitationGateReducer(state: InvitationGateState, action: InvitationGateAction): InvitationGateState {
   if (state.status === 'complete') return state;
   if (action.type === 'retry') return { ...state, error: null };
@@ -38,7 +47,7 @@ export function invitationGateReducer(state: InvitationGateState, action: Invita
     if (!action.localTestModeEnabled) {
       return { ...state, error: 'Код приглашения выдаёт Арслан. В этой локальной версии серверной проверки нет.' };
     }
-    if (state.inviteCode.trim() !== LOCAL_TEST_INVITE_CODE) return { ...state, error: 'Неверный локальный тестовый код приглашения.' };
+    if (!isLocalTestInviteCode(state.inviteCode)) return { ...state, error: 'Неверный локальный тестовый код приглашения.' };
     return { status: 'complete', inviteCode: '', displayName, error: null };
   }
   return state;

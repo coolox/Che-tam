@@ -16,8 +16,13 @@ export type LocalTestModeRuntimeConfig = {
   } | null;
 };
 
+function isEnabledLocalTestModeValue(value: string | undefined): boolean {
+  const normalizedValue = value?.trim().toLocaleLowerCase('en-US');
+  return normalizedValue === '1' || normalizedValue === 'true';
+}
+
 export function resolveLocalTestMode(env: LocalTestModeEnv = {}): LocalTestModeConfig {
-  return { enabled: env.EXPO_PUBLIC_LOCAL_TEST_MODE === '1' };
+  return { enabled: isEnabledLocalTestModeValue(env.EXPO_PUBLIC_LOCAL_TEST_MODE) };
 }
 
 export function getLocalTestModeConfig(runtimeConfig: LocalTestModeRuntimeConfig = Constants): LocalTestModeConfig {

@@ -42,7 +42,7 @@ export type InvitationGateViewModel = {
 export function getInvitationGateViewModel(state: InvitationGateState, localTestModeEnabled: boolean): InvitationGateViewModel {
   return {
     error: state.error,
-    localTestHint: localTestModeEnabled ? `Локальный тестовый код: ${LOCAL_TEST_INVITE_CODE}` : null,
+    localTestHint: localTestModeEnabled ? `Тестовый код: ${LOCAL_TEST_INVITE_CODE}` : null,
     normalModeExplanation: 'Код приглашения выдаёт Арслан лично. В локальной версии нет серверной проверки.',
     primaryDisabled: isInvitationGateSubmitDisabled(state),
     retryVisible: Boolean(state.error),

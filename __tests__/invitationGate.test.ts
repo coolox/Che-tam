@@ -55,7 +55,7 @@ function collectText(node: ReactTestInstance): string {
 
 describe('local invitation gate', () => {
   it('validates input, rejects normal local mode, and accepts only the documented localtest code', () => {
-    expect(LOCAL_TEST_INVITE_CODE).toBe('LOCAL-TEST-INVITE');
+    expect(LOCAL_TEST_INVITE_CODE).toBe('ТЕСТ');
     expect(normalizeDisplayName('  Айгуль   М.  ')).toBe('Айгуль М.');
 
     let state = invitationGateReducer(initialInvitationGateState, { type: 'inviteCodeChanged', inviteCode: 'WRONG' });
@@ -72,6 +72,34 @@ describe('local invitation gate', () => {
     state = invitationGateReducer(state, { type: 'inviteCodeChanged', inviteCode: LOCAL_TEST_INVITE_CODE });
     state = invitationGateReducer(state, { type: 'submit', localTestModeEnabled: true });
     expect(state).toEqual({ status: 'complete', inviteCode: '', displayName: 'Айгуль', error: null });
+  });
+
+  it('accepts the documented localtest invite code after Unicode trim and case normalization only in localtest mode', () => {
+    ['ТЕСТ', 'тест', '  ТЕСТ  ', 'TEST', 'test', ' Test '].forEach((inviteCode) => {
+      let state = invitationGateReducer(initialInvitationGateState, { type: 'inviteCodeChanged', inviteCode });
+      state = invitationGateReducer(state, { type: 'displayNameChanged', displayName: ' Айгуль ' });
+      expect(invitationGateReducer(state, { type: 'submit', localTestModeEnabled: true })).toEqual({
+        status: 'complete',
+        inviteCode: '',
+        displayName: 'Айгуль',
+        error: null,
+      });
+      expect(invitationGateReducer(state, { type: 'submit', localTestModeEnabled: false })).toMatchObject({
+        status: 'editing',
+        error: 'Код приглашения выдаёт Арслан. В этой локальной версии серверной проверки нет.',
+      });
+    });
+  });
+
+  it('rejects invalid localtest invite values', () => {
+    ['WRONG', 'ТЕСТ1', 'TEST1', 'ТЕС'].forEach((inviteCode) => {
+      let state = invitationGateReducer(initialInvitationGateState, { type: 'inviteCodeChanged', inviteCode });
+      state = invitationGateReducer(state, { type: 'displayNameChanged', displayName: 'Айгуль' });
+      expect(invitationGateReducer(state, { type: 'submit', localTestModeEnabled: true })).toMatchObject({
+        status: 'editing',
+        error: 'Неверный локальный тестовый код приглашения.',
+      });
+    });
   });
 
   it('persists admission with display name through the preference boundary', async () => {
@@ -100,7 +128,7 @@ describe('local invitation gate', () => {
       primaryDisabled: true,
     });
     expect(getInvitationGateViewModel(initialInvitationGateState, true)).toMatchObject({
-      localTestHint: `Локальный тестовый код: ${LOCAL_TEST_INVITE_CODE}`,
+      localTestHint: `Тестовый код: ${LOCAL_TEST_INVITE_CODE}`,
       primaryDisabled: true,
     });
   });
@@ -129,7 +157,7 @@ describe('local invitation gate', () => {
     expect(text).toContain('Вход по приглашению');
     expect(text).toContain('Код приглашения');
     expect(text).toContain('Как вас зовут');
-    expect(text).toContain(`Локальный тестовый код: ${LOCAL_TEST_INVITE_CODE}`);
+    expect(text).toContain(`Тестовый код: ${LOCAL_TEST_INVITE_CODE}`);
     expect(text).not.toContain('Номер телефона');
     expect(text).not.toContain('SMS');
     expect(text).not.toContain('СМС');
