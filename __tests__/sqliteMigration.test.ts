@@ -1,10 +1,14 @@
 import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
-import { migrateDatabase } from '../src/storage/sqlite/migrate';
+import { listSqliteMigrationVersions, migrateDatabase } from '../src/storage/sqlite/migrate';
 import type { SqlExecutor, SqlResult, SqlValue } from '../src/storage/sqlite/contracts';
 
 const timestamp = '2026-10-03T12:00:00.000Z';
 
 describe('SQLite schema migration', () => {
+  it('declares contiguous migration versions for permanent fixture coverage', () => {
+    expect(listSqliteMigrationVersions()).toEqual([1, 2]);
+  });
+
   it('enables SQLite foreign keys outside the migration transaction', async () => {
     class TrackingDatabase extends InMemorySqliteDatabase {
       public pragmaLocations: string[] = [];

@@ -1,5 +1,3 @@
-export const SCHEMA_VERSION = 2;
-
 export const CREATE_SCHEMA_MIGRATIONS = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
@@ -72,3 +70,10 @@ export const SCHEMA_V2_STATEMENTS = [
     updated_at TEXT NOT NULL
   )`,
 ] as const;
+
+export const SQLITE_MIGRATIONS = [
+  { version: 1, statements: SCHEMA_V1_STATEMENTS },
+  { version: 2, statements: SCHEMA_V2_STATEMENTS },
+] as const;
+
+export const SCHEMA_VERSION = SQLITE_MIGRATIONS[SQLITE_MIGRATIONS.length - 1].version;

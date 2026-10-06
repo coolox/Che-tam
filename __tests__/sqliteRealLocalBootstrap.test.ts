@@ -1,14 +1,4 @@
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { DatabaseSync } = require('node:sqlite') as {
-  DatabaseSync: new (path: string) => {
-    close(): void;
-    exec(sql: string): void;
-    prepare(sql: string): {
-      all(...params: unknown[]): Record<string, unknown>[];
-      run(...params: unknown[]): { changes: number };
-    };
-  };
-};
 const { mkdtempSync, rmSync } = require('fs') as {
   mkdtempSync(prefix: string): string;
   rmSync(path: string, options: { force: boolean; recursive: boolean }): void;
@@ -16,46 +6,9 @@ const { mkdtempSync, rmSync } = require('fs') as {
 const { tmpdir } = require('os') as { tmpdir(): string };
 const { join } = require('path') as { join(...parts: string[]): string };
 import { createLocalMessageStore } from '../src/messages/localMessageStore';
-import type { SqlDatabase, SqlExecutor, SqlResult, SqlValue } from '../src/storage/sqlite/contracts';
 import { migrateDatabase } from '../src/storage/sqlite/migrate';
 import { createSqliteRepositories } from '../src/storage/sqlite/repositories';
-
-class RealSqliteDatabase implements SqlDatabase {
-  private readonly database: InstanceType<typeof DatabaseSync>;
-
-  public constructor(path: string) {
-    this.database = new DatabaseSync(path);
-  }
-
-  public close(): void {
-    this.database.close();
-  }
-
-  async execute(sql: string, params: readonly SqlValue[] = []): Promise<SqlResult> {
-    if (params.length === 0) {
-      this.database.exec(sql);
-      return { changes: 0 };
-    }
-    const result = this.database.prepare(sql).run(...params);
-    return { changes: result.changes };
-  }
-
-  async query<T extends Record<string, SqlValue>>(sql: string, params: readonly SqlValue[] = []): Promise<T[]> {
-    return this.database.prepare(sql).all(...params).map(row => ({ ...row })) as T[];
-  }
-
-  async transaction<T>(work: (transaction: SqlExecutor) => Promise<T>): Promise<T> {
-    this.database.exec('BEGIN');
-    try {
-      const result = await work(this);
-      this.database.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.database.exec('ROLLBACK');
-      throw error;
-    }
-  }
-}
+import { RealSqliteDatabase } from './helpers/realSqlite';
 
 const timestamp = '2026-10-03T12:00:00.000Z';
 
