@@ -19,4 +19,16 @@ describe('localtest APK build script', () => {
       `unzip -p "$APK" assets/app.config | grep -F '"EXPO_PUBLIC_LOCAL_TEST_MODE":"1"'`,
     );
   });
+
+  it('normalizes a relative APK argument against ROOT_DIR before entering android', () => {
+    const source = fs.readFileSync(scriptPath, 'utf8');
+    const relativeArgumentIndex = source.indexOf('*) APK="$ROOT_DIR/$1" ;;');
+    const absoluteArgumentIndex = source.indexOf('/*) APK="$1" ;;');
+    const cdAndroidIndex = source.indexOf('cd "$ROOT_DIR/android"');
+
+    expect(relativeArgumentIndex).toBeGreaterThan(-1);
+    expect(absoluteArgumentIndex).toBeGreaterThan(-1);
+    expect(relativeArgumentIndex).toBeLessThan(cdAndroidIndex);
+    expect(absoluteArgumentIndex).toBeLessThan(cdAndroidIndex);
+  });
 });

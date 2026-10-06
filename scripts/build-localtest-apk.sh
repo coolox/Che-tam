@@ -2,7 +2,14 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APK="${1:-"$ROOT_DIR/artifacts/che-tam-v0.6.6-localtest-arm64.apk"}"
+if [[ $# -gt 0 ]]; then
+  case "$1" in
+    /*) APK="$1" ;;
+    *) APK="$ROOT_DIR/$1" ;;
+  esac
+else
+  APK="$ROOT_DIR/artifacts/che-tam-v0.6.6-localtest-arm64.apk"
+fi
 BUILD_APK="$ROOT_DIR/android/app/build/outputs/apk/release/app-release.apk"
 
 mkdir -p "$(dirname "$APK")"
