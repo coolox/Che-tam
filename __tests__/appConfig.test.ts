@@ -50,4 +50,89 @@ describe('app config localtest serialization', () => {
     expect(gradle).toContain('versionCode 9');
     expect(gradle).toContain('versionName "0.6.8"');
   });
+
+  it('autolinks sodium-react-native-direct on Android with its native package', async () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const path = require('path') as {
+      join(...segments: string[]): string;
+      resolve(...segments: string[]): string;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createReactNativeConfigAsync } = require('expo-modules-autolinking/build/reactNativeConfig/reactNativeConfig') as {
+      createReactNativeConfigAsync(params: {
+        appRoot: string;
+        sourceDir?: string;
+        autolinkingOptions: {
+          platform: 'android';
+          exclude: string[];
+          nativeModulesDir?: string;
+          searchPaths: string[];
+          legacy_shallowReactNativeLinking?: boolean;
+        };
+      }): Promise<{
+        dependencies: Record<
+          string,
+          {
+            platforms: {
+              android?: {
+                sourceDir: string;
+                packageImportPath: string;
+                packageInstance: string;
+              };
+            };
+          }
+        >;
+      }>;
+    };
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { createMemoizer } = require('expo-modules-autolinking/build/memoize') as {
+      createMemoizer(): {
+        withMemoizer<T>(fn: () => Promise<T>): Promise<T>;
+      };
+    };
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const reactNativeConfig = require('../react-native.config.js') as {
+      dependencies: {
+        'sodium-react-native-direct': {
+          platforms: {
+            android: {
+              sourceDir: string;
+              packageImportPath: string;
+              packageInstance: string;
+            };
+          };
+        };
+      };
+    };
+
+    const projectRoot = path.resolve('.');
+    const configuredAndroid =
+      reactNativeConfig.dependencies['sodium-react-native-direct'].platforms.android;
+    const config = await createMemoizer().withMemoizer(() =>
+      createReactNativeConfigAsync({
+        appRoot: projectRoot,
+        autolinkingOptions: {
+          platform: 'android',
+          exclude: [],
+          searchPaths: [path.join(projectRoot, 'node_modules')],
+        },
+      })
+    );
+
+    const androidConfig = config.dependencies['sodium-react-native-direct']?.platforms.android;
+
+    expect(configuredAndroid).toEqual({
+      sourceDir: 'android',
+      packageImportPath: 'import com.sodiumreactnative.SodiumReactNativePackage;',
+      packageInstance: 'new SodiumReactNativePackage()',
+    });
+    expect(androidConfig).toBeDefined();
+    expect(androidConfig?.sourceDir).toBe(
+      path.join(projectRoot, 'node_modules/sodium-react-native-direct/android')
+    );
+    expect(androidConfig?.packageImportPath).toBe(
+      'import com.sodiumreactnative.SodiumReactNativePackage;'
+    );
+    expect(androidConfig?.packageInstance).toBe('new SodiumReactNativePackage()');
+  }, 15000);
 });
