@@ -53,6 +53,11 @@ export type ChatSearchModel = {
   active: boolean;
   query: string;
 };
+export type ChatPreviewDisplayModel = {
+  accessibilityLabel: string;
+  isDraft: boolean;
+  text: string;
+};
 
 export function searchChats(chats: Chat[], query: string, messagesByChat: Record<string, Message[]> = {}): Chat[] {
   const needle = normalize(query);
@@ -275,6 +280,25 @@ export function formatMessageTime(value: string, options: Intl.DateTimeFormatOpt
 
 export function getChatPreview(chat: Chat): string {
   return chat.lastMessage.length > 80 ? `${chat.lastMessage.slice(0, 77)}...` : chat.lastMessage;
+}
+
+export function getChatPreviewDisplayModel(chat: Chat): ChatPreviewDisplayModel {
+  const draft = chat.composerDraft?.trim() ?? '';
+  if (draft.length > 0) {
+    const text = draft.length > 80 ? `${draft.slice(0, 77)}...` : draft;
+    return {
+      accessibilityLabel: `Черновик: ${text}`,
+      isDraft: true,
+      text,
+    };
+  }
+
+  const text = getChatPreview(chat);
+  return {
+    accessibilityLabel: text,
+    isDraft: false,
+    text,
+  };
 }
 
 type CivilDateParts = {

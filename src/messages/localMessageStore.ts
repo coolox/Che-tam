@@ -136,12 +136,13 @@ export function formatChatListTime(timestamp: string, options: Intl.DateTimeForm
   return formatLocalCivilTime(timestamp, options);
 }
 
-function chatToViewModel(chat: StoredChat, lastMessage: string): Chat {
+function chatToViewModel(chat: StoredChat, lastMessage: string, composerDraft: string | null = null): Chat {
   return {
     id: chat.id,
     name: chat.title,
     initials: initials(chat.title),
     avatarColor: avatarColor(chat.id),
+    composerDraft,
     lastMessage,
     time: chat.lastMessageAt ? formatChatListTime(chat.lastMessageAt) : '',
     unread: chat.unreadCount,
@@ -219,8 +220,9 @@ export function createLocalMessageStore(
     const chats: Chat[] = [];
     for (const storedChat of storedChats) {
       const messages = (await repositories.listMessages(storedChat.id)).map(messageToViewModel);
+      const draft = await repositories.readChatDraft(storedChat.id);
       messagesByChat[storedChat.id] = messages;
-      chats.push(chatToViewModel(storedChat, messages.at(-1)?.text ?? ''));
+      chats.push(chatToViewModel(storedChat, messages.at(-1)?.text ?? '', draft?.text ?? null));
     }
     setSnapshot({ status: 'ready', chats, messagesByChat, errorText: null, errorDiagnostic: null });
   }
@@ -269,6 +271,7 @@ export function createLocalMessageStore(
       if (!repositories) return;
       try {
         await repositories.clearChatDraft(chatId);
+        await refresh();
       } catch (error) {
         setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }
@@ -318,9 +321,11 @@ export function createLocalMessageStore(
       try {
         if (draft.trim().length === 0) {
           await repositories.clearChatDraft(chatId);
+          await refresh();
           return;
         }
         await repositories.saveChatDraft({ chatId, text: draft, updatedAt: now().toISOString() });
+        await refresh();
       } catch (error) {
         setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
       }

@@ -2,6 +2,7 @@ import { InMemorySqliteDatabase } from '../src/storage/sqlite/inMemoryAdapter';
 import { createLocalMessageStore, EMPTY_CHATS_TEXT, EMPTY_CONVERSATION_TEXT, formatChatListTime, formatLocalDataError, formatLocalDataErrorDiagnostic, LOCAL_DATA_ERROR_TEXT, LOCAL_LOADING_TEXT } from '../src/messages/localMessageStore';
 import { createDebugLocalAckTransportAvailabilitySource } from '../src/messages/localOutbox';
 import { formatMessageTime, getConversationDateItems } from '../src/ui/state';
+import { RealSqliteDatabase, withTempSqlitePath } from './helpers/realSqlite';
 
 describe('local message store', () => {
   it('formats chat-list times in the selected device time zone', () => {
@@ -80,6 +81,67 @@ describe('local message store', () => {
 
     expect(await store.readComposerDraft('parents')).toBeNull();
     expect(await store.readComposerDraft('sister')).toBe('Черновик для сестры');
+  });
+
+  it('shows saved composer drafts from real SQLite after refresh and restart without reordering chats', async () => {
+    await withTempSqlitePath('che-tam-draft-preview-', async (databasePath) => {
+      let database = new RealSqliteDatabase(databasePath);
+      let store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+        developmentSeedEnabled: true,
+        now: () => new Date('2026-10-04T12:00:00.000Z'),
+        transport: null,
+      });
+      await store.bootstrap();
+      const initialOrder = store.getSnapshot().chats.map(chat => chat.id);
+      const initialParents = store.getSnapshot().chats.find(chat => chat.id === 'parents');
+
+      await store.saveComposerDraft('grandma', '  Купить лекарства  ');
+
+      expect(await store.readComposerDraft('grandma')).toBe('  Купить лекарства  ');
+      expect(store.getSnapshot().chats.map(chat => chat.id)).toEqual(initialOrder);
+      expect(store.getSnapshot().chats.find(chat => chat.id === 'grandma')).toMatchObject({
+        composerDraft: '  Купить лекарства  ',
+      });
+      expect(store.getSnapshot().chats.find(chat => chat.id === 'parents')).toMatchObject({
+        lastMessage: initialParents?.lastMessage,
+        time: initialParents?.time,
+        unread: initialParents?.unread,
+      });
+
+      store.dispose();
+      database.close();
+
+      database = new RealSqliteDatabase(databasePath);
+      store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+        developmentSeedEnabled: true,
+        idFactory: () => 'draft-preview-send',
+        now: () => new Date('2026-10-04T12:05:00.000Z'),
+        transport: null,
+      });
+      await store.bootstrap();
+
+      expect(store.getSnapshot().chats.map(chat => chat.id)).toEqual(initialOrder);
+      expect(store.getSnapshot().chats.find(chat => chat.id === 'grandma')?.composerDraft).toBe('  Купить лекарства  ');
+
+      await store.saveComposerDraft('grandma', '');
+      expect(await store.readComposerDraft('grandma')).toBeNull();
+      expect(store.getSnapshot().chats.find(chat => chat.id === 'grandma')?.composerDraft).toBeNull();
+
+      await store.saveComposerDraft('grandma', 'Отправить и очистить');
+      await expect(store.sendTextMessage('grandma', 'Отправить и очистить')).resolves.toEqual({
+        sent: true,
+        clientMessageId: 'draft-preview-send',
+      });
+      expect(await store.readComposerDraft('grandma')).toBeNull();
+      expect(store.getSnapshot().chats[0]).toMatchObject({
+        id: 'grandma',
+        composerDraft: null,
+        lastMessage: 'Отправить и очистить',
+      });
+
+      store.dispose();
+      database.close();
+    });
   });
 
   it('retains drafts for empty or failed sends and clears only after a successful send', async () => {

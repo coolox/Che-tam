@@ -61,7 +61,7 @@ import {
   closeChatSearch,
   getCallLogDisplayModel,
   getCallbackCallMode,
-  getChatPreview,
+  getChatPreviewDisplayModel,
   getMissedCallCount,
   getOrderedChats,
   getTotalUnreadCount,
@@ -858,6 +858,7 @@ function ChatListRow({
   const { colors } = useTheme();
   const styles = useStyles();
   const selectedProgress = useRef(new Animated.Value(selected ? 1 : 0)).current;
+  const preview = getChatPreviewDisplayModel(chat);
 
   useEffect(() => {
     Animated.timing(selectedProgress, {
@@ -904,8 +905,9 @@ function ChatListRow({
           <Text style={styles.chatTime}>{chat.time}</Text>
         </View>
         <View style={styles.rowBetween}>
-          <Text ellipsizeMode="tail" numberOfLines={1} style={styles.chatPreview}>
-            {getChatPreview(chat)}
+          <Text accessibilityLabel={preview.accessibilityLabel} ellipsizeMode="tail" numberOfLines={1} style={styles.chatPreview}>
+            {preview.isDraft ? <Text style={styles.chatDraftPrefix}>Черновик: </Text> : null}
+            {preview.text}
           </Text>
           {chat.unread > 0 ? (
             <View style={styles.unreadBadge}>
@@ -1751,6 +1753,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   chatName: { color: colors.text, flexShrink: 1, fontSize: typography.md, fontWeight: '700' },
   chatTime: { color: colors.textMuted, flexShrink: 0, fontSize: typography.xs },
   chatPreview: { color: colors.textSecondary, flex: 1, fontSize: typography.sm, minWidth: 0 },
+  chatDraftPrefix: { color: colors.danger, fontWeight: '700' },
   trafficLabel: { color: colors.accent, fontSize: typography.xs, fontWeight: '700' },
   unreadBadge: {
     alignItems: 'center',

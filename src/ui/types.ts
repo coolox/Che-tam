@@ -9,6 +9,7 @@ export type Chat = {
   name: string;
   initials: string;
   avatarColor: string;
+  composerDraft?: string | null;
   lastMessage: string;
   time: string;
   unread: number;

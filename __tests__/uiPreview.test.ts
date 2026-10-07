@@ -28,6 +28,7 @@ import {
   closeChatSearch,
   getCallLogDisplayModel,
   getCallbackCallMode,
+  getChatPreviewDisplayModel,
   getComposerState,
   getDeliveryIndicatorPresentation,
   getDeliveryIndicatorState,
@@ -153,6 +154,29 @@ describe('UI Preview local behavior', () => {
   it('derives composer action and camera visibility from trimmed text', () => {
     expect(getComposerState('   ')).toEqual({ action: 'mic', showCamera: true, trimmedText: '' });
     expect(getComposerState('  Привет  ')).toEqual({ action: 'send', showCamera: false, trimmedText: 'Привет' });
+  });
+
+  it('marks chat preview drafts without changing the base message preview', () => {
+    const chat = { ...INITIAL_CHATS[0], composerDraft: '  Позвонить вечером  ', lastMessage: 'Последнее сообщение' };
+
+    expect(getChatPreviewDisplayModel(chat)).toEqual({
+      accessibilityLabel: 'Черновик: Позвонить вечером',
+      isDraft: true,
+      text: 'Позвонить вечером',
+    });
+    expect(getChatPreviewDisplayModel({ ...chat, composerDraft: '' })).toEqual({
+      accessibilityLabel: 'Последнее сообщение',
+      isDraft: false,
+      text: 'Последнее сообщение',
+    });
+  });
+
+  it('renders chat draft prefix with the theme danger token', () => {
+    const previewSource = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
+
+    expect(previewSource).toContain('getChatPreviewDisplayModel(chat)');
+    expect(previewSource).toContain('<Text style={styles.chatDraftPrefix}>Черновик: </Text>');
+    expect(previewSource).toContain('chatDraftPrefix: { color: colors.danger');
   });
 
   it('ignores stale composer draft loads when the selected chat changes quickly', () => {
