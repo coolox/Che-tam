@@ -11,6 +11,9 @@ Principles (apply to every task):
   retries must be idempotent (no duplicates).
 - Explicit states for delivery and connection; never fail silently.
 - Minimal traffic; no hard dependency on FCM or any single endpoint.
+- The server never sees plaintext message or media content (ADR-004).
+- Cryptography uses only libsodium; do not write custom cryptography.
+- Never log message text, keys, passwords, or invitation codes.
 - All UI text in Russian. Never log phone numbers, codes, tokens or
   message content.
 
