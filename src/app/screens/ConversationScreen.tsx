@@ -22,11 +22,13 @@ import type { ReactNode } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
+  Easing,
   FlatList,
   Keyboard,
   Modal,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  PanResponder,
   Platform,
   Pressable,
   StyleSheet,
@@ -70,9 +72,21 @@ import {
 import { useTheme } from '../../ui/theme';
 import { radius, spacing, typography, type ThemeColors } from '../../ui/tokens';
 import type { Chat, Message } from '../../ui/types';
-import { reactNativeClipboardWriter, type ClipboardWriter } from '../clipboard';
+import { expoClipboardWriter, type ClipboardWriter } from '../clipboard';
+import {
+  initialMessageSwipeReplyState,
+  reduceMessageSwipeReply,
+  shouldCaptureSwipeReplyGesture,
+  type MessageSwipeReplyState,
+} from './messageSwipeReply';
 
 type CallMode = 'audio' | 'video';
+type MessageActionLayout = { height: number; pageX: number; pageY: number; width: number } | null;
+type ExpoHapticsModule = {
+  ImpactFeedbackStyle?: { Light?: string };
+  impactAsync?: (style?: string) => Promise<void>;
+  selectionAsync?: () => Promise<void>;
+};
 
 type ConversationScreenProps = {
   chat: Chat;
@@ -95,7 +109,7 @@ type ConversationScreenProps = {
 
 export function ConversationScreen({
   chat,
-  clipboardWriter = reactNativeClipboardWriter,
+  clipboardWriter = expoClipboardWriter,
   connectionStatusSource,
   composer,
   dataErrorDiagnostic,
@@ -121,6 +135,7 @@ export function ConversationScreen({
   const listRef = useRef<FlatList<ConversationDateItem>>(null);
   const latestMessage = messages.at(-1) ?? null;
   const [messageActionSheet, setMessageActionSheet] = useState<MessageActionSheetState>(closeMessageActionSheet());
+  const [messageActionLayout, setMessageActionLayout] = useState<MessageActionLayout>(null);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const scrollIntentState = useRef<ConversationScrollIntentState>({
     isAtLatest: true,
@@ -171,6 +186,15 @@ export function ConversationScreen({
 
   const closeActions = useCallback(() => setMessageActionSheet(closeMessageActionSheet()), []);
 
+  const openActions = useCallback((message: Message, layout: MessageActionLayout) => {
+    setMessageActionLayout(layout);
+    setMessageActionSheet(openMessageActionSheet(message));
+  }, []);
+
+  const setReplyFromMessage = useCallback((message: Message) => {
+    setReplyTarget(createReplyTarget(message, chat));
+  }, [chat]);
+
   const handleCopyMessage = useCallback(async () => {
     if (!messageActionSheet.visible) return;
     await clipboardWriter.setString(messageActionSheet.message.text);
@@ -179,9 +203,9 @@ export function ConversationScreen({
 
   const handleReplyMessage = useCallback(() => {
     if (!messageActionSheet.visible) return;
-    setReplyTarget(createReplyTarget(messageActionSheet.message, chat));
+    setReplyFromMessage(messageActionSheet.message);
     closeActions();
-  }, [chat, closeActions, messageActionSheet]);
+  }, [closeActions, messageActionSheet, setReplyFromMessage]);
 
   const handleConfirmDeleteMessage = useCallback(async () => {
     if (!messageActionSheet.visible) return;
@@ -264,7 +288,7 @@ export function ConversationScreen({
           renderItem={({ item }) => (
             item.itemType === 'dateDivider'
               ? <Text accessibilityLabel={item.label} accessibilityRole="text" style={styles.dateDivider}>{item.label}</Text>
-              : <MessageBubble message={item.message} messages={messages} onLongPressMessage={(message) => setMessageActionSheet(openMessageActionSheet(message))} onRetryMessage={onRetryMessage} />
+              : <MessageBubble message={item.message} messages={messages} onLongPressMessage={openActions} onReplyMessage={setReplyFromMessage} onRetryMessage={onRetryMessage} />
           )}
           scrollEventThrottle={32}
           style={styles.messageList}
@@ -334,6 +358,7 @@ export function ConversationScreen({
         onCopy={() => void handleCopyMessage()}
         onDelete={() => setMessageActionSheet(current => requestMessageDeleteConfirmation(current))}
         onReply={handleReplyMessage}
+        selectedLayout={messageActionLayout}
         state={messageActionSheet}
       />
     </KeyboardAvoidingView>
@@ -369,16 +394,91 @@ function MessageBubble({
   message,
   messages,
   onLongPressMessage,
+  onReplyMessage,
   onRetryMessage,
 }: {
   message: Message;
   messages: Message[];
-  onLongPressMessage: (message: Message) => void;
+  onLongPressMessage: (message: Message, layout: MessageActionLayout) => void;
+  onReplyMessage: (message: Message) => void;
   onRetryMessage: (clientMessageId: string) => void;
 }) {
   const { colors } = useTheme();
   const styles = useStyles();
   const presentation = getMessagePresentation(messages, message);
+  const bubbleRef = useRef<View>(null);
+  const swipeState = useRef<MessageSwipeReplyState>(initialMessageSwipeReplyState());
+  const translateX = useRef(new Animated.Value(0)).current;
+  const replyAffordanceOpacity = useRef(new Animated.Value(0)).current;
+  const replyAffordanceScale = useRef(new Animated.Value(0.8)).current;
+  const triggerReplyHaptic = useCallback(() => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const haptics = require('expo-haptics') as ExpoHapticsModule;
+      if (haptics.impactAsync) {
+        void haptics.impactAsync(haptics.ImpactFeedbackStyle?.Light);
+      } else if (haptics.selectionAsync) {
+        void haptics.selectionAsync();
+      }
+    } catch {
+      // Haptics are best-effort; missing native module must not break reply.
+    }
+  }, []);
+  const resetSwipeAnimation = useCallback(() => {
+    Animated.parallel([
+      Animated.spring(translateX, { friction: 8, tension: 90, toValue: 0, useNativeDriver: true }),
+      Animated.timing(replyAffordanceOpacity, { duration: 120, toValue: 0, useNativeDriver: true }),
+      Animated.timing(replyAffordanceScale, { duration: 120, toValue: 0.8, useNativeDriver: true }),
+    ]).start();
+  }, [replyAffordanceOpacity, replyAffordanceScale, translateX]);
+  const updateSwipeAnimation = useCallback((nextState: MessageSwipeReplyState) => {
+    translateX.setValue(nextState.translateX);
+    Animated.parallel([
+      Animated.timing(replyAffordanceOpacity, {
+        duration: 90,
+        toValue: nextState.translateX > 0 ? 1 : 0,
+        useNativeDriver: true,
+      }),
+      Animated.timing(replyAffordanceScale, {
+        duration: 90,
+        toValue: nextState.replyReady ? 1 : 0.86,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [replyAffordanceOpacity, replyAffordanceScale, translateX]);
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => shouldCaptureSwipeReplyGesture(gesture.dx, gesture.dy),
+    onPanResponderGrant: () => {
+      swipeState.current = initialMessageSwipeReplyState();
+    },
+    onPanResponderMove: (_, gesture) => {
+      const result = reduceMessageSwipeReply(swipeState.current, { type: 'move', dx: gesture.dx, dy: gesture.dy });
+      swipeState.current = result.state;
+      if (result.shouldTriggerHaptic) {
+        triggerReplyHaptic();
+      }
+      updateSwipeAnimation(result.state);
+    },
+    onPanResponderRelease: () => {
+      const result = reduceMessageSwipeReply(swipeState.current, { type: 'release' });
+      swipeState.current = result.state;
+      resetSwipeAnimation();
+      if (result.shouldReply) {
+        onReplyMessage(message);
+      }
+    },
+    onPanResponderTerminate: () => {
+      const result = reduceMessageSwipeReply(swipeState.current, { type: 'cancel' });
+      swipeState.current = result.state;
+      resetSwipeAnimation();
+    },
+  }), [message, onReplyMessage, resetSwipeAnimation, triggerReplyHaptic, updateSwipeAnimation]);
+  const handleLongPress = useCallback(() => {
+    bubbleRef.current?.measureInWindow((pageX, pageY, width, height) => {
+      onLongPressMessage(message, { height, pageX, pageY, width });
+    });
+  }, [message, onLongPressMessage]);
+
   if (presentation.isCallEvent) {
     return (
       <View style={[styles.callEventBubble, presentation.isMissedCall && styles.missedCallEventBubble]}>
@@ -390,23 +490,40 @@ function MessageBubble({
   }
 
   return (
-    <Pressable
-      accessibilityLabel={message.sender === 'me' ? 'Ваше сообщение' : 'Сообщение собеседника'}
-      accessibilityRole="button"
-      onLongPress={() => onLongPressMessage(message)}
-      style={[
-        styles.messageBubble,
-        message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
-        presentation.incomingTail && styles.incomingBubbleTail,
-      ]}
-    >
-      {message.replyTo ? <MessageQuote senderName={message.replyTo.senderName} preview={message.replyTo.preview} /> : null}
-      <Text style={styles.messageText}>{message.text}</Text>
-      <View style={styles.messageMetaRow}>
-        <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
-        <DeliveryIndicator message={message} onRetryMessage={onRetryMessage} state={getDeliveryIndicatorState(presentation)} />
-      </View>
-    </Pressable>
+    <View style={styles.messageSwipeRow}>
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.swipeReplyAffordance,
+          message.sender === 'me' ? styles.swipeReplyAffordanceOutgoing : styles.swipeReplyAffordanceIncoming,
+          { opacity: replyAffordanceOpacity, transform: [{ scale: replyAffordanceScale }] },
+        ]}
+      >
+        <Reply color={colors.surface} size={18} />
+        <Text style={styles.swipeReplyText}>Ответить</Text>
+      </Animated.View>
+      <Animated.View style={{ transform: [{ translateX }] }}>
+        <Pressable
+          {...panResponder.panHandlers}
+          accessibilityLabel={message.sender === 'me' ? 'Ваше сообщение' : 'Сообщение собеседника'}
+          accessibilityRole="button"
+          onLongPress={handleLongPress}
+          ref={bubbleRef}
+          style={[
+            styles.messageBubble,
+            message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
+            presentation.incomingTail && styles.incomingBubbleTail,
+          ]}
+        >
+          {message.replyTo ? <MessageQuote senderName={message.replyTo.senderName} preview={message.replyTo.preview} /> : null}
+          <Text style={styles.messageText}>{message.text}</Text>
+          <View style={styles.messageMetaRow}>
+            <Text style={styles.messageMeta}>{formatMessageTime(message.createdAt)}</Text>
+            <DeliveryIndicator message={message} onRetryMessage={onRetryMessage} state={getDeliveryIndicatorState(presentation)} />
+          </View>
+        </Pressable>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -429,6 +546,7 @@ function MessageActionMenu({
   onCopy,
   onDelete,
   onReply,
+  selectedLayout,
   state,
 }: {
   onCancel: () => void;
@@ -436,15 +554,91 @@ function MessageActionMenu({
   onCopy: () => void;
   onDelete: () => void;
   onReply: () => void;
+  selectedLayout: MessageActionLayout;
   state: MessageActionSheetState;
 }) {
   const { colors } = useTheme();
   const styles = useStyles();
+  const [renderedState, setRenderedState] = useState<MessageActionSheetState>(state);
+  const transition = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (state.visible) {
+      setRenderedState(state);
+      Animated.timing(transition, {
+        duration: 150,
+        easing: Easing.out(Easing.cubic),
+        toValue: 1,
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    Animated.timing(transition, {
+      duration: 120,
+      easing: Easing.in(Easing.cubic),
+      toValue: 0,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setRenderedState(closeMessageActionSheet());
+      }
+    });
+  }, [state, transition]);
+  const visible = state.visible || renderedState.visible;
+  const activeState = renderedState.visible ? renderedState : state;
+  const menuTop = selectedLayout ? Math.max(24, selectedLayout.pageY + selectedLayout.height + 8) : undefined;
+  const selectedTop = selectedLayout ? Math.max(16, selectedLayout.pageY) : undefined;
+  const menuHorizontalStyle = activeState.visible && activeState.message.sender === 'me'
+    ? { right: 16 }
+    : { left: Math.max(16, selectedLayout?.pageX ?? 16) };
   return (
-    <Modal animationType="fade" onRequestClose={onCancel} transparent visible={state.visible}>
+    <Modal animationType="none" onRequestClose={onCancel} transparent visible={visible}>
       <Pressable accessibilityLabel="Закрыть действия сообщения" accessibilityRole="button" onPress={onCancel} style={styles.actionBackdrop}>
-        <Pressable accessibilityLabel="Действия сообщения" accessibilityRole="menu" onPress={(event) => event.stopPropagation()} style={styles.actionSheet}>
-          {state.visible && state.confirmDelete ? (
+        {activeState.visible ? (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.selectedMessageHighlight,
+              {
+                left: activeState.message.sender === 'me' ? undefined : selectedLayout?.pageX,
+                opacity: transition,
+                right: activeState.message.sender === 'me' ? 16 : undefined,
+                top: selectedTop,
+                transform: [{ scale: transition.interpolate({ inputRange: [0, 1], outputRange: [0.98, 1] }) }],
+                width: selectedLayout?.width,
+              },
+            ]}
+          >
+            <View
+              style={[
+                styles.messageBubble,
+                styles.highlightedBubble,
+                activeState.message.sender === 'me' ? styles.outgoingBubble : styles.incomingBubble,
+              ]}
+            >
+              {activeState.message.replyTo ? <MessageQuote senderName={activeState.message.replyTo.senderName} preview={activeState.message.replyTo.preview} /> : null}
+              <Text style={styles.messageText}>{activeState.message.text}</Text>
+              <View style={styles.messageMetaRow}>
+                <Text style={styles.messageMeta}>{formatMessageTime(activeState.message.createdAt)}</Text>
+              </View>
+            </View>
+          </Animated.View>
+        ) : null}
+        <Animated.View
+          style={[
+            styles.actionSheetPlacement,
+            {
+              ...menuHorizontalStyle,
+              opacity: transition,
+              top: menuTop,
+              transform: [
+                { translateY: transition.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) },
+                { scale: transition.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) },
+              ],
+            },
+          ]}
+        >
+          <Pressable accessibilityLabel="Действия сообщения" accessibilityRole="menu" onPress={(event) => event.stopPropagation()} style={styles.actionSheet}>
+          {activeState.visible && activeState.confirmDelete ? (
             <>
               <Text accessibilityRole="header" style={styles.actionTitle}>Удалить сообщение у себя?</Text>
               <Text style={styles.actionText}>Сообщение исчезнет только на этом устройстве.</Text>
@@ -463,12 +657,10 @@ function MessageActionMenu({
               <ActionMenuButton icon={<Reply color={colors.accent} size={19} />} label="Ответить" onPress={onReply} />
               <ActionMenuButton icon={<Copy color={colors.accent} size={19} />} label="Копировать" onPress={onCopy} />
               <ActionMenuButton danger icon={<Trash2 color={colors.danger} size={19} />} label="Удалить у себя" onPress={onDelete} />
-              <Pressable accessibilityLabel="Отмена" accessibilityRole="button" onPress={onCancel} style={styles.actionCancelButton}>
-                <Text style={styles.actionCancelText}>Отмена</Text>
-              </Pressable>
             </>
           )}
-        </Pressable>
+          </Pressable>
+        </Animated.View>
       </Pressable>
     </Modal>
   );
@@ -626,10 +818,27 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     paddingHorizontal: spacing.lg,
   },
   secondaryButtonText: { color: colors.accent, fontSize: typography.md, fontWeight: '800' },
+  messageSwipeRow: { justifyContent: 'center', minHeight: 36 },
   messageBubble: { borderRadius: 16, maxWidth: '82%', minWidth: 74, paddingHorizontal: spacing.sm, paddingBottom: 5, paddingTop: 7 },
   incomingBubble: { alignSelf: 'flex-start', backgroundColor: colors.surface },
   incomingBubbleTail: { borderTopLeftRadius: 4 },
   outgoingBubble: { alignSelf: 'flex-end', backgroundColor: colors.outgoing, borderTopRightRadius: 4 },
+  swipeReplyAffordance: {
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    borderRadius: radius.full,
+    flexDirection: 'row',
+    gap: 5,
+    height: 34,
+    justifyContent: 'center',
+    left: 0,
+    paddingHorizontal: spacing.sm,
+    position: 'absolute',
+    top: 5,
+  },
+  swipeReplyAffordanceIncoming: { left: 2 },
+  swipeReplyAffordanceOutgoing: { left: '18%' },
+  swipeReplyText: { color: colors.surface, fontSize: typography.xs, fontWeight: '800' },
   messageText: { color: colors.text, fontSize: typography.md, lineHeight: 22 },
   messageMetaRow: { alignItems: 'center', alignSelf: 'flex-end', flexDirection: 'row', gap: 2, marginTop: 3 },
   messageMeta: { color: colors.textMuted, fontSize: typography.xs },
@@ -721,22 +930,39 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   actionBackdrop: {
     backgroundColor: 'rgba(15, 23, 42, 0.42)',
     flex: 1,
-    justifyContent: 'flex-end',
     padding: spacing.md,
+  },
+  selectedMessageHighlight: { position: 'absolute' },
+  highlightedBubble: {
+    borderColor: 'rgba(255, 255, 255, 0.74)',
+    borderWidth: 1,
+    elevation: 8,
+    shadowColor: '#000000',
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+  },
+  actionSheetPlacement: {
+    alignSelf: 'center',
+    maxWidth: 260,
+    minWidth: 224,
+    position: 'absolute',
   },
   actionSheet: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     borderWidth: 1,
+    elevation: 12,
     gap: spacing.xs,
     padding: spacing.sm,
+    shadowColor: '#000000',
+    shadowOffset: { height: 8, width: 0 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
   },
   actionMenuButton: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.sm },
   actionMenuText: { color: colors.text, fontSize: typography.md, fontWeight: '800' },
   actionMenuDangerText: { color: colors.danger },
-  actionCancelButton: { alignItems: 'center', borderTopColor: colors.border, borderTopWidth: 1, minHeight: 48, justifyContent: 'center', marginTop: spacing.xs },
-  actionCancelText: { color: colors.textSecondary, fontSize: typography.md, fontWeight: '800' },
   actionTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800', paddingHorizontal: spacing.sm, paddingTop: spacing.xs },
   actionText: { color: colors.textSecondary, fontSize: typography.sm, lineHeight: 19, paddingHorizontal: spacing.sm },
   actionRow: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm },

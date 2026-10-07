@@ -1,7 +1,11 @@
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const fs = require('fs') as { readFileSync(path: string, encoding: string): string };
-import { Clipboard } from 'react-native';
-import { reactNativeClipboardWriter } from '../src/app/clipboard';
+jest.mock('expo-clipboard', () => ({ setStringAsync: jest.fn(() => Promise.resolve()) }), { virtual: true });
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const expoClipboard = require('expo-clipboard') as { setStringAsync: jest.Mock };
+
+import { expoClipboardWriter } from '../src/app/clipboard';
 import {
   closeMessageActionSheet,
   createReplyTarget,
@@ -34,14 +38,14 @@ const message: Message = {
 };
 
 describe('message actions and replies', () => {
-  it('copies exact message text through the installed React Native Clipboard API', async () => {
-    const warn = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const setString = jest.spyOn(Clipboard, 'setString').mockImplementation(() => undefined);
-    await reactNativeClipboardWriter.setString(message.text);
+  beforeEach(() => {
+    expoClipboard.setStringAsync.mockClear();
+  });
 
-    expect(setString).toHaveBeenCalledWith('Точный текст для буфера');
-    setString.mockRestore();
-    warn.mockRestore();
+  it('copies exact message text through the installed Expo Clipboard API', async () => {
+    await expoClipboardWriter.setString(message.text);
+
+    expect(expoClipboard.setStringAsync).toHaveBeenCalledWith('Точный текст для буфера');
   });
 
   it('derives local action-sheet and delete-confirmation states without message content in logs', () => {
@@ -65,11 +69,12 @@ describe('message actions and replies', () => {
   it('wires accessible Russian long-press actions in the conversation UI', () => {
     const source = fs.readFileSync('src/app/screens/ConversationScreen.tsx', 'utf8');
 
-    expect(source).toContain('onLongPress={() => onLongPressMessage(message)}');
+    expect(source).toContain('onLongPress={handleLongPress}');
     expect(source).toContain('label="Ответить"');
     expect(source).toContain('label="Копировать"');
     expect(source).toContain('label="Удалить у себя"');
     expect(source).toContain('accessibilityLabel="Убрать ответ"');
     expect(source).toContain('Удалить сообщение у себя?');
+    expect(source).toContain('accessibilityLabel="Закрыть действия сообщения"');
   });
 });
