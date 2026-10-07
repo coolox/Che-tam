@@ -2,7 +2,7 @@
   "expo": {
     "name": "Чё-Там",
     "slug": "che-tam",
-    "version": "0.6.6",
+    "version": "0.6.7",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "assetBundlePatterns": [
@@ -14,7 +14,7 @@
     },
     "android": {
       "package": "net.hearth.chetam",
-      "versionCode": 7,
+      "versionCode": 8,
       "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "./assets/brand/che-tam-brand-mark.png",
