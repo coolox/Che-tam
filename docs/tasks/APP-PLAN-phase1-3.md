@@ -33,7 +33,7 @@ ADR-001 определяет Android-доставку: в нормальном �
 - **APP-014L-15 — draft preview in chats:** локальный SQLite-черновик отображается в списке как акцентное «Черновик:» и текст, не изменяя сортировку чатов по `last_message_at`.
 - **APP-014L-16 — message actions and reply gestures:** локальные long-press actions (Reply/Copy/Trash2) с доступным закрытием tap-outside и reply swipe-right с краткой `expo-haptics` feedback; никаких сетевых вызовов.
 - **APP-014L-17 — local chat search:** верхняя лупа открывает поиск по имени чата и тексту локальных сообщений из SQLite, с детерминированными SQLite-тестами.
-- **APP-014L-18 — maintained clipboard boundary:** устаревший React Native Clipboard заменяется на `expo-clipboard`; copy action сохраняет существующее локальное поведение и покрыта тестом границы.
+- **APP-014L-18 — maintained clipboard boundary:** устаревший React Native Clipboard заменён на SDK-bundled `expo-clipboard`; copy action закрывает меню при успехе, показывает доступную ошибку при сбое и покрыт тестами границы.
 - **APP-014L-19 — v0.6.7 localtest release:** только после локального принятия APP-014L-14…18: versionName `0.6.7`, новый Android versionCode, тестовая сборка ARM64 с `EXPO_PUBLIC_LOCAL_TEST_MODE=1`; вручную проверяется обновление поверх 0.6.6 без потери SQLite-данных. APK собирает Hermes через `scripts/build-localtest-apk.sh` и проверяет встроенный флаг.
 
 ### ADR-002 — обязательный gate сервера и доменов перед APP-007

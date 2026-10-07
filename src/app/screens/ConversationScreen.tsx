@@ -107,6 +107,30 @@ type ConversationScreenProps = {
   onRetryMessage: (clientMessageId: string) => void;
 };
 
+export const COPY_MESSAGE_FAILURE_TEXT = 'Не удалось скопировать. Попробуйте ещё раз.';
+
+export async function copyMessageFromActionSheet({
+  clipboardWriter,
+  onFailure,
+  onSuccess,
+  state,
+}: {
+  clipboardWriter: ClipboardWriter;
+  onFailure: (message: string) => void;
+  onSuccess: () => void;
+  state: MessageActionSheetState;
+}): Promise<boolean> {
+  if (!state.visible) return false;
+  try {
+    await clipboardWriter.setString(state.message.text);
+    onSuccess();
+    return true;
+  } catch {
+    onFailure(COPY_MESSAGE_FAILURE_TEXT);
+    return false;
+  }
+}
+
 export function ConversationScreen({
   chat,
   clipboardWriter = expoClipboardWriter,
@@ -136,6 +160,7 @@ export function ConversationScreen({
   const latestMessage = messages.at(-1) ?? null;
   const [messageActionSheet, setMessageActionSheet] = useState<MessageActionSheetState>(closeMessageActionSheet());
   const [messageActionLayout, setMessageActionLayout] = useState<MessageActionLayout>(null);
+  const [copyErrorText, setCopyErrorText] = useState<string | null>(null);
   const [replyTarget, setReplyTarget] = useState<ReplyTarget | null>(null);
   const scrollIntentState = useRef<ConversationScrollIntentState>({
     isAtLatest: true,
@@ -184,9 +209,13 @@ export function ConversationScreen({
     });
   }, [applyScrollIntent, latestMessage?.id, latestMessage?.sender]);
 
-  const closeActions = useCallback(() => setMessageActionSheet(closeMessageActionSheet()), []);
+  const closeActions = useCallback(() => {
+    setCopyErrorText(null);
+    setMessageActionSheet(closeMessageActionSheet());
+  }, []);
 
   const openActions = useCallback((message: Message, layout: MessageActionLayout) => {
+    setCopyErrorText(null);
     setMessageActionLayout(layout);
     setMessageActionSheet(openMessageActionSheet(message));
   }, []);
@@ -196,9 +225,12 @@ export function ConversationScreen({
   }, [chat]);
 
   const handleCopyMessage = useCallback(async () => {
-    if (!messageActionSheet.visible) return;
-    await clipboardWriter.setString(messageActionSheet.message.text);
-    closeActions();
+    await copyMessageFromActionSheet({
+      clipboardWriter,
+      onFailure: setCopyErrorText,
+      onSuccess: closeActions,
+      state: messageActionSheet,
+    });
   }, [clipboardWriter, closeActions, messageActionSheet]);
 
   const handleReplyMessage = useCallback(() => {
@@ -358,6 +390,7 @@ export function ConversationScreen({
         onCopy={() => void handleCopyMessage()}
         onDelete={() => setMessageActionSheet(current => requestMessageDeleteConfirmation(current))}
         onReply={handleReplyMessage}
+        copyErrorText={copyErrorText}
         selectedLayout={messageActionLayout}
         state={messageActionSheet}
       />
@@ -541,6 +574,7 @@ function MessageQuote({ senderName, preview }: { senderName: string; preview: st
 }
 
 function MessageActionMenu({
+  copyErrorText,
   onCancel,
   onConfirmDelete,
   onCopy,
@@ -549,6 +583,7 @@ function MessageActionMenu({
   selectedLayout,
   state,
 }: {
+  copyErrorText: string | null;
   onCancel: () => void;
   onConfirmDelete: () => void;
   onCopy: () => void;
@@ -654,6 +689,11 @@ function MessageActionMenu({
             </>
           ) : (
             <>
+              {copyErrorText ? (
+                <Text accessibilityLiveRegion="polite" accessibilityRole="alert" style={styles.actionErrorText}>
+                  {copyErrorText}
+                </Text>
+              ) : null}
               <ActionMenuButton icon={<Reply color={colors.accent} size={19} />} label="Ответить" onPress={onReply} />
               <ActionMenuButton icon={<Copy color={colors.accent} size={19} />} label="Копировать" onPress={onCopy} />
               <ActionMenuButton danger icon={<Trash2 color={colors.danger} size={19} />} label="Удалить у себя" onPress={onDelete} />
@@ -963,6 +1003,7 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
   actionMenuButton: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, minHeight: 48, paddingHorizontal: spacing.sm },
   actionMenuText: { color: colors.text, fontSize: typography.md, fontWeight: '800' },
   actionMenuDangerText: { color: colors.danger },
+  actionErrorText: { color: colors.danger, fontSize: typography.sm, fontWeight: '700', lineHeight: 19, paddingHorizontal: spacing.sm, paddingVertical: spacing.xs },
   actionTitle: { color: colors.text, fontSize: typography.lg, fontWeight: '800', paddingHorizontal: spacing.sm, paddingTop: spacing.xs },
   actionText: { color: colors.textSecondary, fontSize: typography.sm, lineHeight: 19, paddingHorizontal: spacing.sm },
   actionRow: { flexDirection: 'row', gap: spacing.sm, paddingTop: spacing.sm },
