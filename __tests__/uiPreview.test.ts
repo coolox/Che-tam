@@ -26,6 +26,7 @@ import {
   clearChatSearchQuery,
   clearChatSelection,
   closeChatSearch,
+  filterChatsBySearchResult,
   getCallLogDisplayModel,
   getCallbackCallMode,
   getChatPreviewDisplayModel,
@@ -66,6 +67,25 @@ describe('UI Preview local behavior', () => {
 
     expect(clearChatSearchQuery(typed)).toEqual({ active: true, query: '' });
     expect(closeChatSearch()).toEqual({ active: false, query: '' });
+  });
+
+  it('filters existing ordered chat rows by repository search result ids', () => {
+    const ordered = getOrderedChats(INITIAL_CHATS);
+
+    expect(filterChatsBySearchResult(ordered, ['sister', 'parents']).map(chat => chat.id)).toEqual(['parents', 'sister']);
+    expect(filterChatsBySearchResult(ordered, [])).toEqual([]);
+    expect(filterChatsBySearchResult(ordered, null)).toBe(ordered);
+  });
+
+  it('wires the Chats header search icon to the active search UI and close controls', () => {
+    const source = fs.readFileSync('src/app/PreviewAppShell.tsx', 'utf8');
+
+    expect(source).toContain('onOpenSearch={startChatSearch}');
+    expect(source).toContain('onCancelSearch={cancelChatSearch}');
+    expect(source).toContain('onClearSearch={clearChatSearch}');
+    expect(source).toContain('accessibilityLabel="Открыть поиск"');
+    expect(source).toContain('accessibilityLabel="Закрыть поиск"');
+    expect(source).toContain('accessibilityLabel="Очистить поиск"');
   });
 
   it('toggles pinned chats and orders pinned items first', () => {

@@ -79,6 +79,12 @@ export function getOrderedChats(chats: Chat[], query = '', messagesByChat: Recor
   });
 }
 
+export function filterChatsBySearchResult(chats: Chat[], matchedChatIds: readonly string[] | null): Chat[] {
+  if (matchedChatIds === null) return chats;
+  const matched = new Set(matchedChatIds);
+  return chats.filter(chat => matched.has(chat.id));
+}
+
 export function togglePinnedChat(chats: Chat[], chatId: string): Chat[] {
   return chats.map(chat => (chat.id === chatId ? { ...chat, pinned: !chat.pinned } : chat));
 }

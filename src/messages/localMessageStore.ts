@@ -35,6 +35,7 @@ export type LocalMessageStore = {
   readComposerDraft(chatId: string): Promise<string | null>;
   retryTextMessage(clientMessageId: string): Promise<{ retried: boolean }>;
   saveComposerDraft(chatId: string, draft: string): Promise<void>;
+  searchChats(query: string): Promise<string[]>;
   sendTextMessage(chatId: string, draft: string, replyTarget?: ReplyTarget | null): Promise<{ sent: boolean; clientMessageId: string | null }>;
   subscribe(listener: () => void): () => void;
 };
@@ -328,6 +329,15 @@ export function createLocalMessageStore(
         await refresh();
       } catch (error) {
         setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
+      }
+    },
+    async searchChats(query) {
+      if (!repositories) return [];
+      try {
+        return await repositories.searchChatIds(query);
+      } catch (error) {
+        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
+        return [];
       }
     },
     async sendTextMessage(chatId, draft, replyTarget = null) {

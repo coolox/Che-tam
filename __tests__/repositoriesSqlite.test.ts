@@ -134,4 +134,51 @@ describe('SQLite repositories', () => {
       }
     });
   });
+
+  it('searches chat titles and all local message bodies with Russian case folding from real SQLite', async () => {
+    await withTempSqlitePath('che-tam-local-search-', async (databasePath) => {
+      const database = new RealSqliteDatabase(databasePath);
+      try {
+        await migrateDatabase(database, now);
+        const repositories = createSqliteRepositories(database);
+        await repositories.upsertProfile({ id: 'p1', displayName: 'Ada', avatarUrl: null, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-title', title: 'Бабушка', kind: 'direct', lastMessageAt: '2026-10-03T14:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-body', title: 'Соседи', kind: 'direct', lastMessageAt: '2026-10-03T13:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-russian', title: 'Родители', kind: 'direct', lastMessageAt: '2026-10-03T12:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-plain', title: 'Друзья', kind: 'direct', lastMessageAt: '2026-10-03T11:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertMessage({ ...message, id: 'm-title', chatId: 'c-title', clientMessageId: 'cm-title', body: 'обычный текст' });
+        await repositories.upsertMessage({ ...message, id: 'm-body-old', chatId: 'c-body', clientMessageId: 'cm-body-old', body: 'раннее сообщение' });
+        await repositories.upsertMessage({ ...message, id: 'm-body', chatId: 'c-body', clientMessageId: 'cm-body', body: 'Привезли лекарства' });
+        await repositories.upsertMessage({ ...message, id: 'm-russian', chatId: 'c-russian', clientMessageId: 'cm-russian', body: 'ЁЛКА во дворе' });
+        await repositories.upsertMessage({ ...message, id: 'm-plain', chatId: 'c-plain', clientMessageId: 'cm-plain', body: 'без совпадений' });
+
+        expect(await repositories.searchChatIds('бабушка')).toEqual(['c-title']);
+        expect(await repositories.searchChatIds('лекарства')).toEqual(['c-body']);
+        expect(await repositories.searchChatIds('ёлка')).toEqual(['c-russian']);
+        expect(await repositories.searchChatIds('нет такого')).toEqual([]);
+      } finally {
+        database.close();
+      }
+    });
+  });
+
+  it('treats SQL wildcard and injection-shaped search text as literal text', async () => {
+    await withTempSqlitePath('che-tam-local-search-literal-', async (databasePath) => {
+      const database = new RealSqliteDatabase(databasePath);
+      try {
+        await migrateDatabase(database, now);
+        const repositories = createSqliteRepositories(database);
+        await repositories.upsertProfile({ id: 'p1', displayName: 'Ada', avatarUrl: null, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-percent', title: 'Проценты', kind: 'direct', lastMessageAt: '2026-10-03T14:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertChat({ id: 'c-other', title: 'Другой чат', kind: 'direct', lastMessageAt: '2026-10-03T13:00:00.000Z', unreadCount: 0, updatedAt: now });
+        await repositories.upsertMessage({ ...message, id: 'm-percent', chatId: 'c-percent', clientMessageId: 'cm-percent', body: 'скидка 50% только сегодня' });
+        await repositories.upsertMessage({ ...message, id: 'm-other', chatId: 'c-other', clientMessageId: 'cm-other', body: 'обычное сообщение' });
+
+        expect(await repositories.searchChatIds('%')).toEqual(['c-percent']);
+        expect(await repositories.searchChatIds("' OR 1=1 --")).toEqual([]);
+      } finally {
+        database.close();
+      }
+    });
+  });
 });

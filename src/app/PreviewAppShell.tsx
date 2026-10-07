@@ -59,6 +59,7 @@ import {
   clearChatSelection,
   clearFamilySelection,
   closeChatSearch,
+  filterChatsBySearchResult,
   getCallLogDisplayModel,
   getCallbackCallMode,
   getChatPreviewDisplayModel,
@@ -113,6 +114,7 @@ type PreviewAppShellProps = {
   onRetry: () => Promise<void>;
   onRetryMessage: (clientMessageId: string) => Promise<{ retried: boolean }>;
   onSaveComposerDraft: (chatId: string, draft: string) => Promise<void>;
+  onSearchChats: (query: string) => Promise<string[]>;
   onSendMessage: (chatId: string, draft: string, replyTarget?: ReplyTarget | null) => Promise<{ sent: boolean; clientMessageId: string | null }>;
 };
 
@@ -163,7 +165,7 @@ export default function PreviewAppShell(props: PreviewAppShellProps) {
   );
 }
 
-function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onDeleteMessageForMe, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSendMessage }: PreviewAppShellProps) {
+function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, snapshot, onClearComposerDraft, onClearUnread, onDeleteMessageForMe, onReadComposerDraft, onRetry, onRetryMessage, onSaveComposerDraft, onSearchChats, onSendMessage }: PreviewAppShellProps) {
   const [screen, setScreen] = useState<Screen>('welcome');
   const [activeTab, setActiveTab] = useState<TabKey>('chats');
   const [selectedChatId, setSelectedChatId] = useState('');
@@ -182,12 +184,18 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
   const [callFallbackText, setCallFallbackText] = useState<string | null>(null);
   const selectedChatIdRef = useRef(selectedChatId);
   const draftLoadRequestRef = useRef(0);
+  const searchRequestRef = useRef(0);
 
   const { mode } = useTheme();
   const styles = useStyles();
   const chats = snapshot.chats;
   const messagesByChat = snapshot.messagesByChat;
-  const orderedChats = useMemo(() => getOrderedChats(chats, chatSearch.query, messagesByChat), [chats, chatSearch.query, messagesByChat]);
+  const [searchResult, setSearchResult] = useState<{ query: string; chatIds: string[] } | null>(null);
+  const orderedChats = useMemo(() => {
+    const baseChats = getOrderedChats(chats);
+    const matchedChatIds = searchResult?.query === chatSearch.query ? searchResult.chatIds : null;
+    return chatSearch.query.trim().length > 0 ? filterChatsBySearchResult(baseChats, matchedChatIds) : baseChats;
+  }, [chats, chatSearch.query, searchResult]);
   const selectedChat = chats.find(chat => chat.id === selectedChatId) ?? chats[0];
   const selectedMessages = selectedChat ? messagesByChat[selectedChat.id] ?? [] : [];
   const callLog = INITIAL_CALL_LOG;
@@ -250,6 +258,23 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
       }
     });
   }, [onReadComposerDraft, screen, selectedChatId]);
+
+  useEffect(() => {
+    if (!chatSearch.active || chatSearch.query.trim().length === 0) {
+      searchRequestRef.current += 1;
+      setSearchResult(null);
+      return;
+    }
+    const requestId = searchRequestRef.current + 1;
+    const query = chatSearch.query;
+    searchRequestRef.current = requestId;
+    setSearchResult({ query, chatIds: [] });
+    void onSearchChats(query).then((chatIds) => {
+      if (requestId === searchRequestRef.current) {
+        setSearchResult({ query, chatIds });
+      }
+    });
+  }, [chatSearch.active, chatSearch.query, onSearchChats]);
 
   const enterDemo = () => {
     setActiveTab('chats');

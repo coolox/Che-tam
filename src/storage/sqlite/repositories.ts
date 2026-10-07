@@ -63,6 +63,15 @@ export type StoredChatDraft = {
 };
 
 type Row = Record<string, SqlValue>;
+type SearchRow = {
+  id: SqlValue;
+  title: SqlValue;
+  body: SqlValue;
+};
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLocaleLowerCase('ru-RU');
+}
 
 function mapChat(row: Row): StoredChat {
   return { id: row.id as string, title: row.title as string, kind: row.kind as string, lastMessageAt: row.last_message_at as string | null, unreadCount: row.unread_count as number, updatedAt: row.updated_at as string };
@@ -143,6 +152,25 @@ export class SqliteRepositories {
 
   async listChats(): Promise<StoredChat[]> {
     return (await this.database.query<Row>('SELECT * FROM chats ORDER BY last_message_at IS NULL ASC, last_message_at DESC, id ASC')).map(mapChat);
+  }
+
+  async searchChatIds(query: string): Promise<string[]> {
+    const needle = normalizeSearchText(query);
+    if (!needle) return [];
+    const rows = await this.database.query<SearchRow>(
+      `SELECT chats.id, chats.title, messages.body
+      FROM chats
+      LEFT JOIN messages ON messages.chat_id = chats.id
+      WHERE ? <> ''
+      ORDER BY chats.last_message_at IS NULL ASC, chats.last_message_at DESC, chats.id ASC, messages.created_at ASC, messages.id ASC`,
+      [query],
+    );
+    const matchedChatIds = new Set<string>();
+    for (const row of rows) {
+      const haystack = normalizeSearchText(`${String(row.title ?? '')} ${String(row.body ?? '')}`);
+      if (haystack.includes(needle)) matchedChatIds.add(String(row.id));
+    }
+    return [...matchedChatIds];
   }
 
   async clearChatUnread(chatId: string, updatedAt: string): Promise<void> {
