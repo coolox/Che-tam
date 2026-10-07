@@ -18,6 +18,7 @@ import {
   Pin,
   Search,
   Settings,
+  ShieldCheck,
   Trash2,
   SwitchCamera,
   Users,
@@ -85,6 +86,7 @@ import {
   type LocalDataErrorDiagnostic,
   type LocalDataSnapshot,
 } from '../messages/localMessageStore';
+import { runLibsodiumCompatibilityProof, type CryptoProofCheckResult } from '../crypto/libsodiumCompatibility';
 import type { NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { ConversationScreen } from './screens/ConversationScreen';
 
@@ -1553,7 +1555,19 @@ function SettingsTab({
 }) {
   const { colors, preference, setPreference } = useTheme();
   const styles = useStyles();
+  const [cryptoResults, setCryptoResults] = useState<CryptoProofCheckResult[]>([]);
+  const [cryptoCheckRunning, setCryptoCheckRunning] = useState(false);
   const selectedMode = TRAFFIC_MODES.find(mode => mode.key === trafficMode) ?? TRAFFIC_MODES[1];
+  const runCryptoCheck = async () => {
+    if (cryptoCheckRunning) return;
+    setCryptoCheckRunning(true);
+    setCryptoResults([]);
+    try {
+      setCryptoResults(await runLibsodiumCompatibilityProof());
+    } finally {
+      setCryptoCheckRunning(false);
+    }
+  };
   return (
     <View style={styles.stack}>
       <View style={styles.profilePanel}>
@@ -1597,6 +1611,37 @@ function SettingsTab({
           ))}
         </View>
       </View>
+      {isLocalTestModeEnabled ? (
+        <View style={styles.infoPanel}>
+          <Text style={styles.infoTitle}>Проверка шифрования</Text>
+          <Pressable
+            accessibilityLabel="Проверка шифрования"
+            accessibilityRole="button"
+            accessibilityState={{ disabled: cryptoCheckRunning }}
+            disabled={cryptoCheckRunning}
+            onPress={runCryptoCheck}
+            style={[styles.cryptoButton, cryptoCheckRunning && styles.disabledAction]}
+          >
+            <ShieldCheck color={colors.surface} size={18} />
+            <Text style={styles.cryptoButtonText}>{cryptoCheckRunning ? 'Проверяем' : 'Запустить'}</Text>
+          </Pressable>
+          {cryptoResults.length > 0 ? (
+            <View style={styles.cryptoResultList}>
+              {cryptoResults.map(result => (
+                <View key={result.key} style={styles.cryptoResultRow}>
+                  <Text style={styles.bodyText}>{result.label}</Text>
+                  <Text
+                    accessibilityLabel={`${result.label}: ${result.status === 'ok' ? 'OK' : `ошибка ${result.errorCategory}`}`}
+                    style={[styles.cryptoResultText, result.status === 'ok' ? styles.cryptoResultOk : styles.cryptoResultError]}
+                  >
+                    {result.status === 'ok' ? 'OK' : `Ошибка: ${result.errorCategory}`}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
       <View style={styles.infoPanel}>
         <Text style={styles.infoTitle}>Расход за месяц</Text>
         <Text style={styles.usageNumber}>184 МБ</Text>
@@ -1872,6 +1917,23 @@ const createStyles = (colors: ThemeColors, insets: { top: number; bottom: number
     paddingHorizontal: spacing.lg,
   },
   secondaryButtonText: { color: colors.accent, fontSize: typography.md, fontWeight: '800' },
+  cryptoButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accent,
+    borderRadius: radius.md,
+    flexDirection: 'row',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+  },
+  cryptoButtonText: { color: colors.surface, fontSize: typography.sm, fontWeight: '800' },
+  cryptoResultList: { gap: spacing.xs },
+  cryptoResultRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, justifyContent: 'space-between' },
+  cryptoResultText: { fontSize: typography.sm, fontWeight: '800' },
+  cryptoResultOk: { color: colors.success },
+  cryptoResultError: { color: colors.danger },
   infoPanel: { backgroundColor: colors.surface, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, gap: spacing.sm, padding: spacing.md },
   aboutBrand: { alignItems: 'center', flexDirection: 'row', gap: spacing.md },
   aboutBrandText: { flex: 1, gap: 4 },

@@ -1,6 +1,6 @@
 {
   "name": "che-tam",
-  "version": "0.6.7",
+  "version": "0.6.8",
   "private": true,
   "main": "index.js",
   "scripts": {
@@ -27,7 +27,8 @@
     "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
     "react-native-svg": "15.15.4",
-    "react-native-worklets": "0.10.1"
+    "react-native-worklets": "0.10.1",
+    "sodium-react-native-direct": "0.4.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
@@ -45,6 +46,9 @@
   },
   "jest": {
     "preset": "jest-expo",
+    "moduleNameMapper": {
+      "^sodium-react-native-direct$": "<rootDir>/__mocks__/sodium-react-native-direct.ts"
+    },
     "testMatch": [
       "**/__tests__/**/*.test.ts"
     ]
