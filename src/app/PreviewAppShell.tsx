@@ -86,7 +86,7 @@ import {
   type LocalDataErrorDiagnostic,
   type LocalDataSnapshot,
 } from '../messages/localMessageStore';
-import { runLibsodiumCompatibilityProof, type CryptoProofCheckResult } from '../crypto/libsodiumCompatibility';
+import type { CryptoProofCheckResult } from '../crypto/libsodiumCompatibility';
 import type { NetworkAvailabilitySource } from '../hooks/useConnectionStatus';
 import { ConversationScreen } from './screens/ConversationScreen';
 
@@ -1563,6 +1563,7 @@ function SettingsTab({
     setCryptoCheckRunning(true);
     setCryptoResults([]);
     try {
+      const { runLibsodiumCompatibilityProof } = await import('../crypto/libsodiumCompatibility');
       setCryptoResults(await runLibsodiumCompatibilityProof());
     } finally {
       setCryptoCheckRunning(false);

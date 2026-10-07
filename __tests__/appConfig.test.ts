@@ -27,7 +27,7 @@ describe('app config localtest serialization', () => {
     expect(createConfig().extra.EXPO_PUBLIC_LOCAL_TEST_MODE).toBe('0');
   });
 
-  it('exposes the 0.6.8 Android overlay version metadata', () => {
+  it('exposes the 0.6.9 Android overlay version metadata', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const createConfig = require('../app.config.js') as () => {
       version: string;
@@ -36,22 +36,22 @@ describe('app config localtest serialization', () => {
 
     const config = createConfig();
 
-    expect(config.version).toBe('0.6.8');
+    expect(config.version).toBe('0.6.9');
     expect(config.android.package).toBe('net.hearth.chetam');
-    expect(config.android.versionCode).toBe(9);
+    expect(config.android.versionCode).toBe(10);
   });
 
-  it('keeps native Android release metadata aligned for 0.6.8 localtest', () => {
+  it('keeps native Android release metadata aligned for 0.6.9 localtest', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('fs') as { readFileSync(path: string, encoding: string): string };
     const gradle = fs.readFileSync('android/app/build.gradle', 'utf8');
 
     expect(gradle).toContain("applicationId 'net.hearth.chetam'");
-    expect(gradle).toContain('versionCode 9');
-    expect(gradle).toContain('versionName "0.6.8"');
+    expect(gradle).toContain('versionCode 10');
+    expect(gradle).toContain('versionName "0.6.9"');
   });
 
-  it('autolinks sodium-react-native-direct on Android with its native package', async () => {
+  it('configures the serenity libsodium Expo plugin and autolinks its Android package', async () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path') as {
       join(...segments: string[]): string;
@@ -91,23 +91,13 @@ describe('app config localtest serialization', () => {
       };
     };
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const reactNativeConfig = require('../react-native.config.js') as {
-      dependencies: {
-        'sodium-react-native-direct': {
-          platforms: {
-            android: {
-              sourceDir: string;
-              packageImportPath: string;
-              packageInstance: string;
-            };
-          };
-        };
-      };
+    const createConfig = require('../app.config.js') as () => {
+      plugins: Array<string | [string, Record<string, unknown>]>;
     };
 
     const projectRoot = path.resolve('.');
-    const configuredAndroid =
-      reactNativeConfig.dependencies['sodium-react-native-direct'].platforms.android;
+    expect(createConfig().plugins).toContainEqual(['react-native-libsodium', {}]);
+
     const config = await createMemoizer().withMemoizer(() =>
       createReactNativeConfigAsync({
         appRoot: projectRoot,
@@ -119,20 +109,13 @@ describe('app config localtest serialization', () => {
       })
     );
 
-    const androidConfig = config.dependencies['sodium-react-native-direct']?.platforms.android;
+    const androidConfig = config.dependencies['react-native-libsodium']?.platforms.android;
 
-    expect(configuredAndroid).toEqual({
-      sourceDir: 'android',
-      packageImportPath: 'import com.sodiumreactnative.SodiumReactNativePackage;',
-      packageInstance: 'new SodiumReactNativePackage()',
-    });
     expect(androidConfig).toBeDefined();
     expect(androidConfig?.sourceDir).toBe(
-      path.join(projectRoot, 'node_modules/sodium-react-native-direct/android')
+      path.join(projectRoot, 'node_modules/react-native-libsodium/android')
     );
-    expect(androidConfig?.packageImportPath).toBe(
-      'import com.sodiumreactnative.SodiumReactNativePackage;'
-    );
-    expect(androidConfig?.packageInstance).toBe('new SodiumReactNativePackage()');
+    expect(androidConfig?.packageImportPath).toBe('import com.libsodium.LibsodiumPackage;');
+    expect(androidConfig?.packageInstance).toBe('new LibsodiumPackage()');
   }, 15000);
 });
