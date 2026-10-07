@@ -213,6 +213,12 @@ export function createLocalMessageStore(
   const listeners = new Set<() => void>();
   const notify = () => listeners.forEach((listener) => listener());
   const setSnapshot = (next: LocalDataSnapshot) => { snapshot = next; notify(); };
+  const reportNonBlockingDraftError = (error: unknown) => {
+    if (localTestMode.enabled) {
+      // Diagnostic intentionally excludes draft text and database parameters.
+      console.warn('Composer draft persistence failed', formatLocalDataError(error));
+    }
+  };
 
   async function refresh(): Promise<void> {
     if (!repositories) throw new Error('Repository is not ready');
@@ -230,6 +236,14 @@ export function createLocalMessageStore(
 
   function refreshAfterOutboxAck(): void {
     void refresh().catch(() => undefined);
+  }
+
+  function updateChatDraftSnapshot(chatId: string, composerDraft: string | null): void {
+    if (snapshot.status !== 'ready') return;
+    const chats = snapshot.chats.map(chat => (
+      chat.id === chatId ? { ...chat, composerDraft } : chat
+    ));
+    setSnapshot({ ...snapshot, chats });
   }
 
   return {
@@ -272,9 +286,9 @@ export function createLocalMessageStore(
       if (!repositories) return;
       try {
         await repositories.clearChatDraft(chatId);
-        await refresh();
+        updateChatDraftSnapshot(chatId, null);
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
+        reportNonBlockingDraftError(error);
       }
     },
     async deleteMessageForMe(messageId) {
@@ -322,13 +336,13 @@ export function createLocalMessageStore(
       try {
         if (draft.trim().length === 0) {
           await repositories.clearChatDraft(chatId);
-          await refresh();
+          updateChatDraftSnapshot(chatId, null);
           return;
         }
         await repositories.saveChatDraft({ chatId, text: draft, updatedAt: now().toISOString() });
-        await refresh();
+        updateChatDraftSnapshot(chatId, draft);
       } catch (error) {
-        setSnapshot({ status: 'error', chats: snapshot.chats, messagesByChat: snapshot.messagesByChat, ...formatLocalDataErrorPresentation(error, localTestMode) });
+        reportNonBlockingDraftError(error);
       }
     },
     async searchChats(query) {

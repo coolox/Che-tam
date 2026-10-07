@@ -83,6 +83,34 @@ describe('local message store', () => {
     expect(await store.readComposerDraft('sister')).toBe('Черновик для сестры');
   });
 
+  it('updates composer draft preview without a full store refresh and keeps draft failures non-fatal', async () => {
+    const database = new InMemorySqliteDatabase();
+    const queriedTables: string[] = [];
+    const originalQuery = database.query.bind(database);
+    jest.spyOn(database, 'query').mockImplementation(async (sql, params) => {
+      queriedTables.push(/from ([a-z_]+)/i.exec(sql)?.[1] ?? 'unknown');
+      return originalQuery(sql, params);
+    });
+    const store = createLocalMessageStore(async () => database, 'che-tam-local.db', {
+      developmentSeedEnabled: true,
+      localTestMode: { enabled: false },
+    });
+    await store.bootstrap();
+    queriedTables.length = 0;
+
+    await store.saveComposerDraft('parents', 'Без полного обновления');
+
+    expect(queriedTables).toEqual([]);
+    expect(store.getSnapshot()).toMatchObject({ status: 'ready' });
+    expect(store.getSnapshot().chats.find(chat => chat.id === 'parents')?.composerDraft).toBe('Без полного обновления');
+
+    database.failNext('insert into chat_drafts');
+    await store.saveComposerDraft('parents', 'Не сохранится');
+
+    expect(store.getSnapshot()).toMatchObject({ status: 'ready' });
+    expect(store.getSnapshot().chats.find(chat => chat.id === 'parents')?.composerDraft).toBe('Без полного обновления');
+  });
+
   it('shows saved composer drafts from real SQLite after refresh and restart without reordering chats', async () => {
     await withTempSqlitePath('che-tam-draft-preview-', async (databasePath) => {
       let database = new RealSqliteDatabase(databasePath);

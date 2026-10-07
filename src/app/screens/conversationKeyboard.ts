@@ -1,6 +1,6 @@
 import type { Message } from '../../ui/types';
 
-const LATEST_SCROLL_OFFSET_THRESHOLD = 48;
+export const LATEST_SCROLL_OFFSET_THRESHOLD = 48;
 
 export const CONVERSATION_KEYBOARD_AVOIDING_PROPS = {
   automaticOffset: true,
@@ -62,8 +62,8 @@ export function reduceConversationScrollIntent(
   const nextState = { ...state, latestMessageId: event.latestMessageId };
   if (event.latestMessageSender === 'me') {
     return {
-      state: { ...nextState, isAtLatest: true, pendingScrollAfterLayout: state.isKeyboardOpen },
-      scrollToLatest: !state.isKeyboardOpen,
+      state: { ...nextState, isAtLatest: true, pendingScrollAfterLayout: true },
+      scrollToLatest: false,
     };
   }
 

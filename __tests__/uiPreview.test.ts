@@ -1,6 +1,10 @@
 jest.mock('@react-native-async-storage/async-storage', () => ({
   __esModule: true,
-  default: { getItem: jest.fn(), setItem: jest.fn() },
+  default: { getItem: jest.fn(() => Promise.resolve(null)), setItem: jest.fn(() => Promise.resolve()) },
+}));
+jest.mock('@react-native-community/netinfo', () => ({
+  __esModule: true,
+  default: { addEventListener: jest.fn(() => jest.fn()) },
 }));
 jest.mock('expo-status-bar', () => ({ StatusBar: () => null }));
 jest.mock('lucide-react-native', () => new Proxy({}, { get: () => () => null }));
@@ -8,12 +12,24 @@ jest.mock('react-native-keyboard-controller', () => ({
   KeyboardAvoidingView: 'KeyboardAvoidingView',
   KeyboardProvider: ({ children }: { children: unknown }) => children,
 }));
+jest.mock('react-native-safe-area-context', () => ({
+  SafeAreaProvider: ({ children }: { children: unknown }) => children,
+  useSafeAreaInsets: () => ({ bottom: 0, left: 0, right: 0, top: 0 }),
+}));
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const fs = require('fs') as { readFileSync(path: string, encoding: string): string };
 
+import React from 'react';
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const TestRenderer = require('react-test-renderer') as {
+  act(callback: () => Promise<void> | void): Promise<void>;
+  create(element: React.ReactElement): ReactTestRenderer;
+};
+import { AppState, Text, TextInput } from 'react-native';
 import { INITIAL_CHATS, INITIAL_MESSAGES } from '../src/ui/demoData';
-import {
+import PreviewAppShell, {
   CALL_UNAVAILABLE_TEXT,
+  COMPOSER_DRAFT_SAVE_DEBOUNCE_MS,
   getHeaderToFirstContentRowGap,
   getSettingsAvatarModel,
   isFreshComposerDraftLoad,
@@ -49,6 +65,46 @@ import {
 } from '../src/ui/state';
 import { darkColors, lightColors } from '../src/ui/tokens';
 import type { TabKey } from '../src/ui/types';
+import type { LocalDataSnapshot } from '../src/messages/localMessageStore';
+
+type ReactTestInstance = {
+  findAll(predicate: (node: ReactTestInstance) => boolean): ReactTestInstance[];
+  findAllByProps(props: Record<string, unknown>): ReactTestInstance[];
+  findAllByType(type: unknown): ReactTestInstance[];
+  props: Record<string, any>;
+  type: unknown;
+};
+
+type ReactTestRenderer = {
+  root: ReactTestInstance;
+  update(element: React.ReactElement): void;
+  unmount(): void;
+};
+
+const { act } = TestRenderer;
+
+function collectNodeText(node: ReactTestInstance): string {
+  return node.findAllByType(Text).map((text: ReactTestInstance) => text.props.children).flat(Number.POSITIVE_INFINITY).join('');
+}
+
+function findPressableByText(root: ReactTestInstance, text: string): ReactTestInstance {
+  return root.findAll(node => node.props.accessibilityRole === 'button' && collectNodeText(node).includes(text))[0];
+}
+
+function findPressableByLabel(root: ReactTestInstance, accessibilityLabel: string): ReactTestInstance {
+  return root.findAllByProps({ accessibilityLabel, accessibilityRole: 'button' })[0];
+}
+
+function createReadySnapshot(overrides: Partial<LocalDataSnapshot> = {}): LocalDataSnapshot {
+  return {
+    status: 'ready',
+    chats: INITIAL_CHATS,
+    messagesByChat: INITIAL_MESSAGES,
+    errorText: null,
+    errorDiagnostic: null,
+    ...overrides,
+  } as LocalDataSnapshot;
+}
 
 describe('UI Preview local behavior', () => {
   it('filters chats by family name, last message or local message text', () => {
@@ -204,6 +260,124 @@ describe('UI Preview local behavior', () => {
     expect(isFreshComposerDraftLoad(2, 2, 'sister', 'sister')).toBe(true);
     expect(isFreshComposerDraftLoad(2, 3, 'sister', 'parents')).toBe(false);
     expect(isFreshComposerDraftLoad(3, 3, 'parents', 'parents')).toBe(true);
+  });
+
+  it('debounces composer draft persistence and keeps typed text ahead of incoming draft snapshots', async () => {
+    jest.useFakeTimers();
+    let resolveDraft: (value: string | null) => void = () => undefined;
+    const saves: { chatId: string; draft: string }[] = [];
+    const props = {
+      snapshot: createReadySnapshot(),
+      onClearComposerDraft: jest.fn(async () => undefined),
+      onClearUnread: jest.fn(async () => undefined),
+      onDeleteMessageForMe: jest.fn(async () => undefined),
+      onReadComposerDraft: jest.fn(() => new Promise<string | null>((resolve) => { resolveDraft = resolve; })),
+      onRetry: jest.fn(async () => undefined),
+      onRetryMessage: jest.fn(async () => ({ retried: false })),
+      onSaveComposerDraft: jest.fn(async (chatId: string, draft: string) => { saves.push({ chatId, draft }); }),
+      onSearchChats: jest.fn(async () => []),
+      onSendMessage: jest.fn(async () => ({ sent: false, clientMessageId: null })),
+    };
+    let renderer: ReactTestRenderer;
+
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(PreviewAppShell, props));
+    });
+    await act(async () => {
+      findPressableByText(renderer!.root, 'Посмотреть демо').props.onPress();
+    });
+    await act(async () => {
+      findPressableByText(renderer!.root, INITIAL_CHATS[0].name).props.onPress();
+    });
+
+    const input = renderer!.root.findAllByType(TextInput).find(node => node.props.accessibilityLabel === 'Текст сообщения') as ReactTestInstance;
+    await act(async () => {
+      for (let index = 1; index <= 30; index += 1) {
+        (input.props.onChangeText as (value: string) => void)(`Черновик ${index}`);
+      }
+      renderer!.update(React.createElement(PreviewAppShell, {
+        ...props,
+        snapshot: createReadySnapshot({ chats: INITIAL_CHATS.map(chat => (chat.id === 'parents' ? { ...chat, composerDraft: 'Старый снимок' } : chat)) }),
+      }));
+      resolveDraft('Старый черновик');
+      await Promise.resolve();
+    });
+
+    const updatedInput = renderer!.root.findAllByType(TextInput).find(node => node.props.accessibilityLabel === 'Текст сообщения') as ReactTestInstance;
+    expect(updatedInput.props.value).toBe('Черновик 30');
+    expect(saves).toHaveLength(0);
+
+    await act(async () => {
+      jest.advanceTimersByTime(COMPOSER_DRAFT_SAVE_DEBOUNCE_MS);
+      await Promise.resolve();
+    });
+
+    expect(saves).toEqual([{ chatId: 'parents', draft: 'Черновик 30' }]);
+    await act(async () => {
+      renderer!.unmount();
+    });
+    jest.useRealTimers();
+  });
+
+  it('flushes pending composer drafts when leaving a chat and when the app backgrounds', async () => {
+    jest.useFakeTimers();
+    let appStateListener: ((state: string) => void) | null = null;
+    const appStateSpy = jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
+      appStateListener = listener as (state: string) => void;
+      return { remove: jest.fn() };
+    });
+    const saves: { chatId: string; draft: string }[] = [];
+    const props = {
+      snapshot: createReadySnapshot(),
+      onClearComposerDraft: jest.fn(async () => undefined),
+      onClearUnread: jest.fn(async () => undefined),
+      onDeleteMessageForMe: jest.fn(async () => undefined),
+      onReadComposerDraft: jest.fn(async () => null),
+      onRetry: jest.fn(async () => undefined),
+      onRetryMessage: jest.fn(async () => ({ retried: false })),
+      onSaveComposerDraft: jest.fn(async (chatId: string, draft: string) => { saves.push({ chatId, draft }); }),
+      onSearchChats: jest.fn(async () => []),
+      onSendMessage: jest.fn(async () => ({ sent: false, clientMessageId: null })),
+    };
+    let renderer: ReactTestRenderer;
+
+    await act(async () => {
+      renderer = TestRenderer.create(React.createElement(PreviewAppShell, props));
+    });
+    await act(async () => {
+      findPressableByText(renderer!.root, 'Посмотреть демо').props.onPress();
+    });
+    await act(async () => {
+      findPressableByText(renderer!.root, INITIAL_CHATS[0].name).props.onPress();
+    });
+    let input = renderer!.root.findAllByType(TextInput).find(node => node.props.accessibilityLabel === 'Текст сообщения') as ReactTestInstance;
+
+    await act(async () => {
+      (input.props.onChangeText as (value: string) => void)('Перед уходом');
+      findPressableByLabel(renderer!.root, 'Назад').props.onPress();
+      await Promise.resolve();
+    });
+    expect(saves).toEqual([{ chatId: 'parents', draft: 'Перед уходом' }]);
+
+    await act(async () => {
+      findPressableByText(renderer!.root, INITIAL_CHATS[0].name).props.onPress();
+    });
+    input = renderer!.root.findAllByType(TextInput).find(node => node.props.accessibilityLabel === 'Текст сообщения') as ReactTestInstance;
+    await act(async () => {
+      (input.props.onChangeText as (value: string) => void)('Перед фоном');
+      appStateListener?.('background');
+      await Promise.resolve();
+    });
+
+    expect(saves).toEqual([
+      { chatId: 'parents', draft: 'Перед уходом' },
+      { chatId: 'parents', draft: 'Перед фоном' },
+    ]);
+    await act(async () => {
+      renderer!.unmount();
+    });
+    appStateSpy.mockRestore();
+    jest.useRealTimers();
   });
 
   it('derives receipt, incoming-tail and call-event presentation state', () => {

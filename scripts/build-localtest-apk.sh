@@ -8,7 +8,8 @@ if [[ $# -gt 0 ]]; then
     *) APK="$ROOT_DIR/$1" ;;
   esac
 else
-  APK="$ROOT_DIR/artifacts/che-tam-v0.6.6-localtest-arm64.apk"
+  PACKAGE_VERSION="$(node -e "process.stdout.write(require(process.argv[1]).version)" "$ROOT_DIR/package.json")"
+  APK="$ROOT_DIR/artifacts/che-tam-v${PACKAGE_VERSION}-localtest-arm64.apk"
 fi
 BUILD_APK="$ROOT_DIR/android/app/build/outputs/apk/release/app-release.apk"
 

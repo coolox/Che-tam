@@ -34,6 +34,7 @@ import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-cont
 import {
   BackHandler,
   Animated,
+  AppState,
   Image,
   Keyboard,
   PanResponder,
@@ -102,6 +103,7 @@ const PIP_WIDTH = 116;
 const PIP_HEIGHT = 148;
 const PIP_CONTROLS_GAP = spacing.lg;
 const VIDEO_CONTROLS_FALLBACK_HEIGHT = 120;
+export const COMPOSER_DRAFT_SAVE_DEBOUNCE_MS = 500;
 
 type PreviewAppShellProps = {
   connectionStatusSource?: NetworkAvailabilitySource;
@@ -184,6 +186,10 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
   const [callFallbackText, setCallFallbackText] = useState<string | null>(null);
   const selectedChatIdRef = useRef(selectedChatId);
   const draftLoadRequestRef = useRef(0);
+  const composerEditVersionRef = useRef(0);
+  const draftSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingDraftSaveRef = useRef<{ chatId: string; draft: string } | null>(null);
+  const onSaveComposerDraftRef = useRef(onSaveComposerDraft);
   const searchRequestRef = useRef(0);
 
   const { mode } = useTheme();
@@ -204,6 +210,53 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
     selectedChatIdRef.current = selectedChatId;
   }, [selectedChatId]);
 
+  useEffect(() => {
+    onSaveComposerDraftRef.current = onSaveComposerDraft;
+  }, [onSaveComposerDraft]);
+
+  const cancelPendingDraftSave = () => {
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    pendingDraftSaveRef.current = null;
+  };
+
+  const flushPendingDraftSave = async () => {
+    const pending = pendingDraftSaveRef.current;
+    if (!pending) return;
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+    pendingDraftSaveRef.current = null;
+    await onSaveComposerDraftRef.current(pending.chatId, pending.draft);
+  };
+
+  const scheduleDraftSave = (chatId: string, draft: string) => {
+    pendingDraftSaveRef.current = { chatId, draft };
+    if (draftSaveTimerRef.current) clearTimeout(draftSaveTimerRef.current);
+    draftSaveTimerRef.current = setTimeout(() => {
+      draftSaveTimerRef.current = null;
+      void flushPendingDraftSave();
+    }, COMPOSER_DRAFT_SAVE_DEBOUNCE_MS);
+  };
+
+  const leaveConversation = (nextScreen: Screen) => {
+    void flushPendingDraftSave();
+    setScreen(nextScreen);
+  };
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'background' || state === 'inactive') void flushPendingDraftSave();
+    });
+    return () => {
+      void flushPendingDraftSave();
+      subscription.remove();
+    };
+  }, []);
+
   const goBack = () => {
     if (selectedChatIds.length > 0) {
       setSelectedChatIds(clearChatSelection().selectedIds);
@@ -219,11 +272,11 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
       return true;
     }
     if (screen === 'call') {
-      setScreen('conversation');
+      leaveConversation('conversation');
       return true;
     }
     if (screen === 'conversation') {
-      setScreen('home');
+      leaveConversation('home');
       return true;
     }
     if (screen === 'home' && activeTab !== 'chats') {
@@ -250,10 +303,14 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
   useEffect(() => {
     if (screen !== 'conversation' || !selectedChatId) return;
     const requestId = draftLoadRequestRef.current + 1;
+    const editVersion = composerEditVersionRef.current;
     draftLoadRequestRef.current = requestId;
     setComposer('');
     void onReadComposerDraft(selectedChatId).then((draft) => {
-      if (isFreshComposerDraftLoad(requestId, draftLoadRequestRef.current, selectedChatId, selectedChatIdRef.current)) {
+      if (
+        editVersion === composerEditVersionRef.current
+        && isFreshComposerDraftLoad(requestId, draftLoadRequestRef.current, selectedChatId, selectedChatIdRef.current)
+      ) {
         setComposer(draft ?? '');
       }
     });
@@ -359,6 +416,7 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
     const draft = composer;
     const result = await onSendMessage(chatId, draft, replyTarget);
     if (result.sent) {
+      cancelPendingDraftSave();
       await onClearComposerDraft(chatId);
       if (selectedChatIdRef.current === chatId) setComposer('');
     }
@@ -366,8 +424,9 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
   };
 
   const updateComposer = (draft: string) => {
+    composerEditVersionRef.current += 1;
     setComposer(draft);
-    if (selectedChat) void onSaveComposerDraft(selectedChat.id, draft);
+    if (selectedChat) scheduleDraftSave(selectedChat.id, draft);
   };
 
   const startCallFromLog = (entry: CallLogEntry) => {
@@ -445,7 +504,7 @@ function ThemedApp({ connectionStatusSource, isLocalTestModeEnabled = false, sna
           dataStatus={snapshot.status}
           isLocalTestModeEnabled={isLocalTestModeEnabled}
           messages={selectedMessages}
-          onBack={() => setScreen('home')}
+          onBack={() => leaveConversation('home')}
           onComposer={updateComposer}
           onDeleteMessageForMe={(messageId) => void onDeleteMessageForMe(messageId)}
           onRetryMessage={(clientMessageId) => void onRetryMessage(clientMessageId)}

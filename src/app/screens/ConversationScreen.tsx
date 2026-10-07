@@ -42,6 +42,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useConnectionStatus, type NetworkAvailabilitySource } from '../../hooks/useConnectionStatus';
 import {
   CONVERSATION_KEYBOARD_AVOIDING_PROPS,
+  LATEST_SCROLL_OFFSET_THRESHOLD,
   reduceConversationScrollIntent,
   type ConversationScrollIntentEvent,
   type ConversationScrollIntentState,
@@ -313,7 +314,7 @@ export function ConversationScreen({
                 : messages.length === 0 ? <Text style={styles.dateDivider}>{EMPTY_CONVERSATION_TEXT}</Text>
                   : null
           }
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          maintainVisibleContentPosition={{ autoscrollToTopThreshold: LATEST_SCROLL_OFFSET_THRESHOLD, minIndexForVisible: 0 }}
           onContentSizeChange={handleLatestLayoutSettled}
           onScroll={handleMessageScroll}
           ref={listRef}
